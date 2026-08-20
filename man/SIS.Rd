@@ -50,22 +50,27 @@ computation.}
 linear models are used.}
 }
 \value{
-A list with the following components:
+A list of class \code{"SIS"} with the following components:
 \itemize{
 \item \code{target_SIS}: A data frame containing the outcome, exposure, selected
 mediators, and covariates from the target dataset.
 \item \code{source_SIS}: A data frame containing the same variables from the source
 dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
 \item \code{M_ID_name_SIS}: A character vector of selected mediator names.
+\item \code{Y}: The resolved outcome variable name.
+\item \code{D}: The resolved exposure variable name.
+\item \code{M}: The full mediator variable names (before screening).
+\item \code{X}: The resolved covariate variable names.
 }
 }
 \description{
-This function performs dimension reduction for high-dimensional mediation analysis
-using Sure Independence Screening (SIS). Mediators are ranked based on the product
-of their marginal associations with the exposure and the outcome, and the top-ranked
-mediators are retained for downstream analysis.
-}
-\details{
+\strong{Step 1} of the \code{\link{TransHDM}} pipeline: dimension reduction via
+Sure Independence Screening (SIS). Mediators are ranked based on the product
+of their marginal associations with the exposure (alpha) and the outcome (beta),
+and the top-ranked mediators are retained for downstream de-biased lasso
+estimation (\code{\link{mediation_inference}}, Step 2) and joint testing
+(\code{\link{joint_test}}, Step 3).
+
 The function supports transfer learning, allowing information from a source dataset
 to be leveraged to improve screening stability and robustness in the target dataset.
 }
@@ -110,4 +115,8 @@ result <- SIS(
 result$M_ID_name_SIS
 }
 
+}
+\seealso{
+\code{\link{TransHDM}}, \code{\link{mediation_inference}},
+\code{\link{joint_test}}
 }

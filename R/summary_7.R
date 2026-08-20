@@ -1,3 +1,20 @@
+#' Print method for source_detection objects
+#'
+#' @param x An object of class \code{"source_detection"}.
+#' @param ... Further arguments (currently not used).
+#'
+#' @return Invisibly returns \code{x}.
+#'
+#' @method print source_detection
+#' @export
+print.source_detection <- function(x, ...) {
+  n_src <- length(x$transfer.source.id)
+  n_tot <- length(x$source.loss)
+  cat(sprintf("Source detection: %d/%d sources transferable\n", n_src, n_tot))
+  invisible(x)
+}
+
+
 #' Summary of Source Detection Results
 #'
 #' @param object An object of class \code{"source_detection"}.

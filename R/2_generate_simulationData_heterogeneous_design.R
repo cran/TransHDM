@@ -17,7 +17,7 @@
 #' @return A list with the following components:
 #' \itemize{
 #'   \item{\code{data}}: A data.frame of dimension \code{n × (2 + p_m + p_x)} containing outcome (Y), treatment (D), mediators (M1–Mp_m), and covariates (X1–Xp_x).
-#'   \item{\code{coef}}: A named list of true model coefficients (\code{alpha1, alpha2, beta1, beta2, beta4}, etc.).
+#'   \item{\code{effect}}: A named list of true total, direct, and indirect effects, exposure-mediator effects and mediator-outcome effects.
 #' }
 #'
 #' @details
@@ -84,7 +84,8 @@ gen_simData_hetero<-function(n=100,
       ncol = p_x
     )
 
-    X.Sigma<-X.Sigma+t(A_k)%*%A_k
+    # X.Sigma<-X.Sigma+t(A_k)%*%A_k
+    X.Sigma <- X.Sigma + crossprod(A_k)
   }
 
   X<-MASS::mvrnorm(n, c(rep(0,p_x)), X.Sigma)
@@ -108,14 +109,11 @@ gen_simData_hetero<-function(n=100,
   colnames(data)<-c('Y','D',paste0('M',1:p_m),paste0('X',1:p_x))
 
   ### true effect
-  coef<-list(alpha0=unname(alpha0),
-             alpha1=unname(alpha1),
-             alpha2=unname(alpha2),
-             beta0=unname(beta0),
-             beta1=unname(beta1),
-             beta2=unname(beta2),
-             beta3=unname(beta3),
-             beta4=unname(beta4))
-
-  return(list(data=data,coef=coef))
+  effect <-list(total=beta1+sum(alpha1*beta2),
+                 direct=beta1,
+                 indirect=unname(sum(alpha1*beta2)),
+                 alpha=unname(alpha1),
+                 beta=unname(beta2),
+                 mediation=unname(alpha1*beta2))
+  return(list(data=data,effect=effect))
 }

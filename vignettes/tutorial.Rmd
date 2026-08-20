@@ -1,8 +1,10 @@
 ---
-title: "tutorial"
+title: "TransHDM: High-Dimensional Mediation Analysis via Transfer Learning"
+author: "Huer Gao"
+date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{tutorial}
+  %\VignetteIndexEntry{TransHDM: High-Dimensional Mediation Analysis via Transfer Learning}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -14,295 +16,172 @@ knitr::opts_chunk$set(
 )
 ```
 
-## Overview of TransHDM
+## Introduction
 
-This work addresses the problem of **high-dimensional mediation analysis under limited sample sizes**. To overcome the challenges of high dimensionality and low statistical power, we adopt a **transfer learning framework** that leverages external source data to improve mediation inference in the target population.
+`TransHDM` provides a framework for high-dimensional mediation analysis using transfer learning. It integrates external source datasets to improve the detection power of potential mediators in small-sample target studies, addressing data heterogeneity via transfer regularization and debiased estimation.
 
-The proposed method, **TransHDM**, follows a three-stage procedure. It first applies Sure Independence Screening (SIS) to reduce the dimensionality of candidate mediators. It then estimates exposure–mediator and mediator–outcome effects and combines them to obtain indirect (mediation) effects. Finally, overall mediation effects, including indirect, direct, and total effects, are summarized for inference.
+## Built-in Data
 
-Specifically, **SIS** ranks mediators based on marginal associations and retains a manageable subset, improving computational efficiency and screening accuracy. Exposure–mediator and mediator–outcome effects are then estimated using high-dimensional regression techniques, optionally incorporating transferable source data. These estimates are combined through the product-of-coefficients approach to quantify mediator-specific indirect effects and overall mediation effects.
+The package includes the simulated inflammatory mediation benchmark dataset with
+one target cohort and two external cohorts:
 
-Through this staged design and the integration of transferable information, TransHDM is able to more accurately identify true mediators and reduce false discoveries, particularly in small-sample, high-dimensional settings.
+- `inflam_target` — target cohort (*n* = 50)
+- `inflam_external1` — transferable external cohort (*n* = 200)
+- `inflam_external2` — non-transferable external cohort (*n* = 100)
+- `inflam_effect` — ground-truth mediation effects
 
-![TransHDM framework](model.png){width=60%}
+The exposure is an inflammatory biomarker (`IB`) and the outcome is a disease
+severity index (`DSI`); the 20 candidate mediators are molecular markers across
+five functional groups. The mediator columns were randomly permuted during
+generation, so the identity of the truly active mediators is hidden.
 
-The methodology implemented in TransHDM is based on the framework proposed in
-Pan L, Liu Y, Huang C, Lin R, Yu Y, Qin G. Transfer learning reveals the mediating mechanisms of cross-ethnic lipid metabolic pathways in the association between APOE gene and Alzheimer's disease. Brief Bioinform. 2025;26(5):bbaf460. <doi:10.1093/bib/bbaf460>
-
-## Basic Workflow
-
-```{r setup}
+```{r}
 library(TransHDM)
+
+data(inflam_target)
+data(inflam_external1)
+data(inflam_external2)
+data(inflam_effect)
+
+target    <- inflam_target
+source    <- inflam_external1
+source_nt <- inflam_external2
+
+outcome_var  <- "DSI"    # disease severity index (outcome)
+exposure_var <- "IB"     # inflammatory biomarker (exposure)
+X_vars       <- c("BIS", "PRS", "BRS")
+M_vars       <- setdiff(colnames(target),
+                        c(outcome_var, exposure_var, X_vars))
+
+## ground truth effect (target cohort)
+inflam_effect
 ```
 
-### Simulation Data Generation Design
+## Source Detection
 
-We generate synthetic data for high-dimensional mediation analysis under different settings.
+Identify which source datasets are transferable to the target population.
+`print()` gives a concise one-line summary, while `summary()` provides
+the detailed decision table:
 
-The target data follow a homogeneous data-generating process, where treatment, mediators, and outcome depend on covariates. Additional source datasets with larger sample sizes are generated under both transferable and non-transferable settings, as well as with covariate shift (homogeneous and heterogeneous settings).
-
-This setup is used to illustrate how the method behaves under different data scenarios.
-
-```{r data}
-seed <- 1
-set.seed(seed)
-
-# ---------------- Simulation Parameters ---------------- #
-p_m <- 50     # num of mediators
-n <- 100      # num of target samples
-rho <- 0.1    # rho for simulation data generation
-p_x <- 5      # num of covariates
-n_s <- 300    # num of source samples
-
-# ---------------- Target Data Generation ---------------- #
-target_sim <- gen_simData_homo(n = n, p_x = p_x, p_m = p_m, rho = rho)
-target_data <- target_sim$data
-
-# true effect of target data
-true_effect <- target_sim$coef$beta2 * target_sim$coef$alpha1
-
-# column names
-M_col <- paste0("M", 1:p_m)
-X_col <- paste0("X", 1:p_x)
-
-# ---------------- Source Data Generation ---------------- #
-# source, transferable, homogeneous
-s_data <- gen_simData_homo(n = n_s, p_x = p_x, p_m = p_m, rho = rho,
-                          source = TRUE, transferable = TRUE, h = 2, seed=seed)$data
-
-# source, not transferable, homogeneous
-s_f_data <- gen_simData_homo(n = n_s, p_x = p_x, p_m = p_m, rho = rho,
-                            source = TRUE, transferable = FALSE, h = 2, seed=seed)$data
-
-# source, transferable, heterogeneous
-s_h_data <- gen_simData_hetero(n = n_s, p_x = p_x, p_m = p_m, rho = rho,
-                              source = TRUE, transferable = TRUE, h = 2, seed=seed)$data
-
-# source, not transferable, heterogeneous
-s_hf_data <- gen_simData_hetero(n = n_s, p_x = p_x, p_m = p_m, rho = rho,
-                               source = TRUE, transferable = FALSE, h = 2, seed=seed)$data
+```{r}
+set.seed(123)
+detect <- source_detection(target_data = target,
+                           source_data = list(source, source_nt),
+                           Y = outcome_var, D = exposure_var, M = M_vars, X = X_vars)
+print(detect)
+summary(detect)
 ```
 
-Display the true mediator effects used in the simulation and briefly inspect the structure of the target dataset.
+Visualization of the source detection results can be done using the `plot()` function:
 
-```{r show_data}
-# ---------------- Show Data ---------------- #
-# show true mediator effect
-true_effect
-
-# # show target data
-# head(target_data)
+```{r, fig.width=6, fig.height=3.5}
+plot(detect)
 ```
 
-### Source Data Detection
+## Integrated Workflow: `TransHDM()`
 
-We first apply the source detection procedure to identify which external datasets are transferable to the target data.
+The `TransHDM()` function provides an end-to-end analysis in one call:
 
-The function source_detection() compares prediction performance across candidate source datasets using cross-validation, with the target-only model as a baseline.
-
-In this example, four source datasets are considered under different data settings. The summary output reports the validation losses and indicates which sources are selected as transferable.
-
-```{r detection}
-detect_all <- source_detection(
-  target_data = target_data,
-  source_data = list(s_data, s_f_data,s_h_data, s_hf_data),
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  kfold = 5,
-  C0 = 0.01,
-  verbose = TRUE
+```{r}
+# With transfer learning
+set.seed(123)
+result_tl <- TransHDM(
+  target_data = target,
+  source_data = source,
+  Y = outcome_var, D = exposure_var,
+  M = M_vars, X = X_vars,
+  transfer = TRUE,
+  topN = 10, p_cutoff = 0.01
 )
-summary(detect_all)
+print(result_tl)
+# summary(result_tl)
 ```
 
-### High-Dimensional Mediation Analysis with TransHDM
-
-We illustrate the use of `TransHDM` for conducting high-dimensional mediation analysis under a transfer learning framework.
-
-We first apply TransHDM to the target data only as a baseline analysis.
-
-```{r TransHDM_notrans}
-set.seed(seed)
-
-# mediation analysis without transfer learning
-res_n <- TransHDM(
-  target_data = target_data,
-  source_data = NULL,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
+```{r}
+# Without transfer learning (target only)
+set.seed(123)
+result_nt <- TransHDM(
+  target_data = target,
+  Y = outcome_var, D = exposure_var,
+  M = M_vars, X = X_vars,
   transfer = FALSE,
-  topN = NULL,
-  dblasso_SIS = FALSE,
-  verbose = TRUE,
-  ncore = 1
+  topN = 10, p_cutoff = 0.01
 )
-summary(res_n)
+print(result_nt)
+summary(result_nt)
 ```
 
-We then incorporate external source data to enable transfer learning, considering both homogeneous and heterogeneous source settings.
+## Visualization
 
-The outputs summarize the selected mediators and their estimated indirect effects, allowing comparison between analyses with and without transfer learning.
-
-```{r TransHDM_transfer}
-# mediation analysis with transfer learning (using homogeneous data)
-res_t <- TransHDM(
-  target_data = target_data,
-  source_data = s_data,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  transfer = TRUE,
-  topN = NULL,
-  dblasso_SIS = FALSE,
-  verbose = TRUE,
-  ncore = 1
-)
-summary(res_t)
+```{r, fig.width=6, fig.height=3.5}
+# Mediator-wise effect plot
+plot(result_tl, type = "mediator")
 ```
 
-```{r TransHDM_hetero, eval = FALSE}
-# mediation analysis with transfer learning (using heterogeneous data)
-res_h <- TransHDM(
-  target_data = target_data,
-  source_data = s_h_data,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  transfer = TRUE,
-  topN = NULL,
-  dblasso_SIS = FALSE,
-  verbose = TRUE,
-  ncore = 1
-)
-summary(res_h)
-```
-With limited target sample size, some spurious mediators may be selected. Incorporating transferable source data leads to more stable estimates and fewer false discoveries.
-
-### Parallel Computation
-
-The `TransHDM` function supports parallel computation through the `ncore` argument, which allows mediator models to be fitted using multiple CPU cores. 
-
-```{r TransHDM_paral, eval = FALSE}
-res_p <- TransHDM(
-  target_data = target_data,
-  source_data = s_data,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  transfer = TRUE,
-  topN = NULL,
-  dblasso_SIS = FALSE,
-  verbose = TRUE,
-  ncore = 4
-)
-summary(res_h)
+```{r, fig.width=6, fig.height=3.5}
+# P-value visualization
+plot(result_tl, type = "pvalue")
 ```
 
-## Utility functions
+```{r, fig.width=6, fig.height=3.5}
+# Overall effect decomposition
+plot(result_tl, type = "overall")
+```
+
+```{r, fig.width=6, fig.height=3.5}
+# Alpha-beta effect plot
+plot(result_tl, type = "alpha_beta")
+```
+
+## Modular Workflow
 
 ### Sure Independence Screening (SIS)
 
-We use Sure Independence Screening (SIS) as the first step to reduce the number of candidate mediators in high-dimensional settings. Mediators are ranked by their marginal associations with the exposure and the outcome, and only the top mediators are retained. SIS can be applied with or without transfer learning.
+Reduce dimensionality by filtering candidate mediators:
 
-```{r SIS, eval = FALSE}
-# SIS without transfer learning
-SIS_n <- SIS(
-  target_data = target_data,
-  source_data = NULL,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  topN = 10,
-  transfer = FALSE,
-  verbose = TRUE,
-  ncore = 1,
-  dblasso_method = FALSE
+```{r}
+set.seed(123)
+sis <- SIS(
+  target_data = target, source_data = source,
+  Y = outcome_var, D = exposure_var, M = M_vars, X = X_vars,
+  transfer = TRUE, topN = 10, ncore = 1
 )
-summary(SIS_n)
+print(sis)
+summary(sis)
+```
 
-# SIS with transfer learning
-SIS_t <- SIS(
-  target_data = target_data,
-  source_data = s_data,
-  Y = "Y",
-  D = "D",
-  M = M_col,
-  X = X_col,
-  topN = 10,
-  transfer = TRUE,
-  verbose = TRUE,
-  ncore = 1,
-  dblasso_method = FALSE
+### Mediation Effect Inference
+
+Estimate exposure-mediator and mediator-outcome effects:
+
+```{r}
+med_effect <- mediation_inference(
+  screen_result = sis,
+  transfer = TRUE
 )
-summary(SIS_t)
+print(med_effect)
+summary(med_effect, top = 10)
 ```
 
-### Linear Regression Models for Transfer Learning
+Do effect estimation and inference directly from the source and target data without SIS:
 
-This section demonstrates two transfer learning methods for linear regression implemented in the package: standard lasso transfer learning and double/debiased lasso transfer learning.
-
-```{r data_reg}
-library(MASS)
-n_target <- 1000
-n_source <- 2000
-p <- 20
-
-Sigma <- 0.2^abs(outer(1:p, 1:p, "-"))  # Autocorrelation structure, weak correlation
-X_target <- mvrnorm(n_target, mu = rep(0, p), Sigma = Sigma)
-X_source <- mvrnorm(n_source, mu = rep(0, p), Sigma = Sigma)
-
-# Construct signal coefficients
-# First 3 variables are strong signals, next 2 are weak signals, rest are zero
-beta <- c(1.5, -1, 1.0, 0.5, -0.5, rep(0, p-5))
-
-# Construct response variables with noise
-y_target <- X_target %*% beta + rnorm(n_target, sd = 1)
-y_source <- X_source %*% beta + rnorm(n_source, sd = 1)
-
-# Build target/source lists
-target <- list(x = X_target, y = y_target)
-source <- list(x = X_source, y = y_source)
+```{r, eval=FALSE}
+mediation_inference(
+  source_data = source, target_data = target,
+  Y = outcome_var, D = exposure_var, M = M_vars, X = X_vars,
+  transfer = TRUE, ncore = 1
+)
 ```
 
-#### Lasso for transfer learning
+### Joint Significance Testing
 
-Primary used in source_detection() and SIS() functions. Applies lasso regression with optional transfer learning.
+Identify significant mediators through joint multiple testing:
 
-```{r lasso}
-# Fit lasso without transfer learning
-coef_n_l <- lasso(target = target, transfer = FALSE, lambda = 'lambda.1se')
-summary(coef_n_l)
-
-# Fit lasso with transfer learning
-coef_t_l <- lasso(target = target, source = source, transfer = TRUE, lambda = 'lambda.1se')
-summary(coef_t_l)
-```
-
-#### Debiased Lasso for transfer learning
-
-Primary used in estimation of `TransHDM()` function. This two-stage debiasing procedure addresses regularization bias:
-1. First debiasing step: Transfer learning bias correction using source data.
-2. Second debiasing step: Lasso bias correction within target data.
-
-![dblasso algorithm](dblasso.png){width=60%}
-
-
-The method produces debiased coefficient estimates with valid confidence intervals, making it suitable for high-dimensional inference.
-
-```{r dblasso}
-# Fit dblasso without transfer learning
-coef_n_d <- dblasso(target = target, transfer = FALSE, lambda = 'lambda.1se')
-summary(coef_n_d)
-
-# Fit dblasso with transfer learning
-coef_t_d <- dblasso(target = target, source = source, transfer = TRUE, lambda = 'lambda.1se')
-summary(coef_t_d)
+```{r}
+jt <- joint_test(
+  inference_result = med_effect,
+  p_cutoff = 0.05
+)
+print(jt)
+summary(jt)
 ```

@@ -15,7 +15,9 @@ TransHDM(
   verbose = TRUE,
   ncore = 1,
   topN = NULL,
-  dblasso_SIS = FALSE
+  use_SIS = TRUE,
+  dblasso_SIS = FALSE,
+  p_cutoff = 0.05
 )
 }
 \arguments{
@@ -47,11 +49,18 @@ mediators to retain after Sure Independence Screening (SIS).
 If \code{NULL}, the number is determined automatically based on
 the data dimensions.}
 
+\item{use_SIS}{A logical value (default: \code{TRUE}) indicating whether to apply
+Sure Independence Screening (SIS) for initial variable screening. When \code{FALSE},
+the full set of mediators is used in estimation and inference.}
+
 \item{dblasso_SIS}{A logical value (default: \code{FALSE}) indicating whether
 to apply a two-stage procedure combining SIS and debiased Lasso.
 When \code{TRUE}, mediators are first screened via SIS and then
 debiased Lasso is applied to the reduced set, which is recommended for
 ultra-high-dimensional settings.}
+
+\item{p_cutoff}{A numeric value (default: 0.05) specifying the maximum p-value threshold for
+determining significant mediators.}
 }
 \value{
 A list with the following components:
@@ -73,6 +82,10 @@ direct effect, total effect, and proportion mediated.
 specified mediators, with non-selected mediators set to zero.
 \item \code{DE_est}: The estimated direct effect of the exposure on the
 outcome.
+\item \code{all_mediators}: A data frame of all SIS-screened mediators
+(including non-significant ones) with columns \code{mediator},
+\code{alpha}, \code{alpha_pv}, \code{beta}, \code{beta_pv}, and
+\code{significant} (logical).
 }
 }
 \description{
@@ -80,6 +93,22 @@ The \code{TransHDM} function performs high-dimensional mediation analysis
 under a transfer learning framework. It identifies and estimates indirect
 (mediation) effects of a high-dimensional set of mediators between an
 exposure and an outcome by integrating a target dataset and a source datasets.
+}
+\details{
+\code{TransHDM} implements a three-step workflow that can also be executed
+step-by-step using the individual components:
+\enumerate{
+\item \strong{Step 1 — Screening:} \code{\link{SIS}} performs Sure
+Independence Screening to reduce dimensionality by ranking mediators
+based on their marginal associations.
+\item \strong{Step 2 — De-biased estimation:}
+\code{\link{mediation_inference}} fits de-biased lasso models to
+estimate exposure-mediator (alpha) and mediator-outcome (beta) effects.
+\item \strong{Step 3 — Multiple testing:} \code{\link{joint_test}}
+applies joint multiple testing with FDR control to identify
+significant mediators and computes effect summaries.
+}
+Set \code{use_SIS = FALSE} to skip Step 1 and use all mediators directly.
 }
 \examples{
 \donttest{
@@ -114,4 +143,8 @@ Transfer learning reveals the mediating mechanisms of cross-ethnic lipid metabol
 pathways in the association between APOE gene and Alzheimer's disease.
 Brief Bioinform. 2025;26(5):bbaf460.
 \doi{10.1093/bib/bbaf460}
+}
+\seealso{
+\code{\link{SIS}}, \code{\link{mediation_inference}},
+\code{\link{joint_test}}
 }

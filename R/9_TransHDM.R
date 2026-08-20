@@ -1,9 +1,29 @@
 #' TransHDM: High-Dimensional Mediation Analysis with Transfer Learning
 #'
+#' @description
 #' The \code{TransHDM} function performs high-dimensional mediation analysis
 #' under a transfer learning framework. It identifies and estimates indirect
 #' (mediation) effects of a high-dimensional set of mediators between an
 #' exposure and an outcome by integrating a target dataset and a source datasets.
+#'
+#' @details
+#' \code{TransHDM} implements a three-step workflow that can also be executed
+#' step-by-step using the individual components:
+#' \enumerate{
+#'   \item \strong{Step 1 — Screening:} \code{\link{SIS}} performs Sure
+#'     Independence Screening to reduce dimensionality by ranking mediators
+#'     based on their marginal associations.
+#'   \item \strong{Step 2 — De-biased estimation:}
+#'     \code{\link{mediation_inference}} fits de-biased lasso models to
+#'     estimate exposure-mediator (alpha) and mediator-outcome (beta) effects.
+#'   \item \strong{Step 3 — Multiple testing:} \code{\link{joint_test}}
+#'     applies joint multiple testing with FDR control to identify
+#'     significant mediators and computes effect summaries.
+#' }
+#' Set \code{use_SIS = FALSE} to skip Step 1 and use all mediators directly.
+#'
+#' @seealso \code{\link{SIS}}, \code{\link{mediation_inference}},
+#'   \code{\link{joint_test}}
 #'
 #' @param target_data A data frame containing the target dataset. All variables must be numeric.
 #' @param source_data A list of data frames containing source datasets (optional, default: NULL).
@@ -23,11 +43,16 @@
 #'   mediators to retain after Sure Independence Screening (SIS).
 #'   If \code{NULL}, the number is determined automatically based on
 #'   the data dimensions.
+#' @param use_SIS A logical value (default: \code{TRUE}) indicating whether to apply
+#'   Sure Independence Screening (SIS) for initial variable screening. When \code{FALSE},
+#'    the full set of mediators is used in estimation and inference.
 #' @param dblasso_SIS A logical value (default: \code{FALSE}) indicating whether
 #'   to apply a two-stage procedure combining SIS and debiased Lasso.
 #'   When \code{TRUE}, mediators are first screened via SIS and then
 #'   debiased Lasso is applied to the reduced set, which is recommended for
 #'   ultra-high-dimensional settings.
+#' @param p_cutoff A numeric value (default: 0.05) specifying the maximum p-value threshold for
+#'   determining significant mediators.
 #'
 #' @return A list with the following components:
 #' \itemize{
@@ -48,6 +73,10 @@
 #'     specified mediators, with non-selected mediators set to zero.
 #'   \item \code{DE_est}: The estimated direct effect of the exposure on the
 #'     outcome.
+#'   \item \code{all_mediators}: A data frame of all SIS-screened mediators
+#'     (including non-significant ones) with columns \code{mediator},
+#'     \code{alpha}, \code{alpha_pv}, \code{beta}, \code{beta_pv}, and
+#'     \code{significant} (logical).
 #' }
 #'
 #' @importFrom stats setNames
@@ -99,7 +128,9 @@ TransHDM <- function(
     verbose = TRUE,
     ncore = 1,
     topN = NULL,
-    dblasso_SIS = FALSE
+    use_SIS =TRUE,
+    dblasso_SIS = FALSE,
+    p_cutoff = 0.05
 ) {
 
   # ---- resolve variables ----
@@ -113,24 +144,31 @@ TransHDM <- function(
   p_m <- length(M)
 
   # ---- Step 1: SIS ----
-  # if (verbose)
-  #   message("Step 1: Sure Independence Screening ...")
+  if(use_SIS){
+    SIS_result <- SIS(
+      target_data = target_data,
+      source_data = source_data,
+      Y = Y,
+      D = D,
+      M = M,
+      X = X,
+      topN = topN,
+      transfer = transfer,
+      verbose = verbose,
+      ncore = ncore,
+      dblasso_method = dblasso_SIS
+    )
+    target_SIS <- SIS_result$target_SIS
+    source_SIS <- SIS_result$source_SIS
+  } else{
+    if (verbose)
+      message("Step 1: SIS skipped; using full set of mediators.")
 
-  SIS_result <- SIS(
-    target_data = target_data,
-    source_data = source_data,
-    Y = Y,
-    D = D,
-    M = M,
-    X = X,
-    topN = topN,
-    transfer = transfer,
-    verbose = verbose,
-    ncore = ncore,
-    dblasso_method = dblasso_SIS
-  )
-  target_SIS <- SIS_result$target_SIS
-  source_SIS <- SIS_result$source_SIS
+    target_SIS <- target_data
+    source_SIS <- source_data
+  }
+
+
 
   # ---- Step 2: De-biased Lasso ----
   ## mediators retained after SIS
@@ -291,7 +329,7 @@ TransHDM <- function(
     exact = 0
   )
 
-  ID_fdr <- which(fdrcut <= 0.05)
+  ID_fdr <- which(fdrcut <= p_cutoff)
   selected_M <- M_SIS[ID_fdr]
 
   alpha_hat_est <- alpha_SIS_est[selected_M]
@@ -324,15 +362,28 @@ TransHDM <- function(
     row.names = NULL
   )
 
+  # All SIS-screened mediators (significant + non-significant)
+  all_mediators <- data.frame(
+    mediator    = M_SIS,
+    alpha       = alpha_SIS_est[M_SIS],
+    alpha_pv    = P_alpha_SIS[M_SIS],
+    beta        = beta_SIS_est[M_SIS],
+    beta_pv     = P_beta_SIS[M_SIS],
+    significant = M_SIS %in% selected_M,
+    row.names   = NULL,
+    stringsAsFactors = FALSE
+  )
+
   if (verbose && length(selected_M) > 0)
     message("Identified mediator(s): ",
             paste(selected_M, collapse = ", "))
 
   fit <- list(
     contributions = contributions,
-    effects = effects,
-    IDE_est = IDE_est,
-    DE_est = DE_est
+    effects       = effects,
+    IDE_est       = IDE_est,
+    DE_est        = DE_est,
+    all_mediators = all_mediators
   )
   class(fit) <- "TransHDM"
   return(fit)

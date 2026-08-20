@@ -12,7 +12,7 @@ source_detection(
   M,
   X,
   kfold = 5,
-  C0 = 0.05,
+  t = 0.02,
   verbose = TRUE
 )
 }
@@ -32,7 +32,7 @@ All variables must be numeric and have the same column names as target_data.}
 
 \item{kfold}{Integer (default: 5). Number of folds for cross-validation.}
 
-\item{C0}{Numeric (default: 0.05). Threshold constant for determining transferability.
+\item{t}{Numeric (default: 0.02). Threshold constant for determining transferability.
 Larger values make the criterion more lenient.}
 
 \item{verbose}{Logical (default: TRUE). Whether to print progress messages.}
@@ -91,7 +91,7 @@ result <- source_detection(
   M = c("M1", "M2"),
   X = "X1",
   kfold = 5,
-  C0 = 0.05,
+  t = 0.05,
   verbose = FALSE
 )
 

@@ -1,3 +1,19 @@
+#' Print method for lasso objects
+#'
+#' @param x An object of class \code{"lasso"}.
+#' @param ... Further arguments (currently not used).
+#'
+#' @return Invisibly returns \code{x}.
+#'
+#' @method print lasso
+#' @export
+print.lasso <- function(x, ...) {
+  nz <- sum(x != 0 & names(x) != "(Intercept)")
+  cat(sprintf("LASSO: %d nonzero / %d predictors\n", nz, length(x) - 1))
+  invisible(x)
+}
+
+
 #' Summary of Lasso Regression
 #'
 #' @param object A numeric vector of lasso coefficients with names.

@@ -1,3 +1,22 @@
+#' Print method for SIS objects
+#'
+#' @param x An object of class \code{"SIS"}.
+#' @param ... Further arguments (currently not used).
+#'
+#' @return Invisibly returns \code{x}.
+#'
+#' @method print SIS
+#' @export
+print.SIS <- function(x, ...) {
+  n_sel <- length(x$M_ID_name_SIS)
+  n_tot <- length(x$M)
+  has_src <- is.data.frame(x$source_SIS)
+  cat(sprintf("SIS: %d/%d mediators retained%s\n",
+              n_sel, n_tot, if (has_src) " (transfer)" else ""))
+  invisible(x)
+}
+
+
 #' @method summary SIS
 #' @export
 summary.SIS <- function(object, ...) {
@@ -36,7 +55,17 @@ print.summary.SIS <- function(x, ...) {
   cat("  Number selected:", x$n_selected %||% 0, "\n")
 
   if (!is.null(x$selected_mediators) && length(x$selected_mediators) > 0) {
-    cat("  Names:", paste(x$selected_mediators, collapse = ", "), "\n")
+    names_txt <- paste(x$selected_mediators, collapse = ", ")
+    cat(
+      paste(
+        strwrap(
+          paste0("  Names: ", names_txt),
+          width = getOption("width", 80)
+        ),
+        collapse = "\n"
+      ),
+      "\n"
+    )
   } else {
     cat("  Names: (none)\n")
   }
@@ -45,14 +74,12 @@ print.summary.SIS <- function(x, ...) {
   if (!is.null(x$target_dim)) {
     cat("\nTarget data after SIS:\n")
     cat("  Sample size (n):", x$target_dim["n"], "\n")
-    cat("  Number of variables (p):", x$target_dim["p"], "\n")
   }
 
   ## source info
   if (!is.null(x$source_dim)) {
     cat("\nSource data after SIS:\n")
     cat("  Sample size (n):", x$source_dim["n"], "\n")
-    cat("  Number of variables (p):", x$source_dim["p"], "\n")
     cat("\nTransfer learning: YES\n")
   } else {
     cat("\nTransfer learning: NO\n")

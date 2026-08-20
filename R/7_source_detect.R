@@ -11,7 +11,7 @@
 #' @param M Character vector specifying mediator variable names.
 #' @param X Character vector specifying covariate variable names.
 #' @param kfold Integer (default: 5). Number of folds for cross-validation.
-#' @param C0 Numeric (default: 0.05). Threshold constant for determining transferability.
+#' @param t Numeric (default: 0.02). Threshold constant for determining transferability.
 #'   Larger values make the criterion more lenient.
 #' @param verbose Logical (default: TRUE). Whether to print progress messages.
 #'
@@ -64,7 +64,7 @@
 #'   M = c("M1", "M2"),
 #'   X = "X1",
 #'   kfold = 5,
-#'   C0 = 0.05,
+#'   t = 0.05,
 #'   verbose = FALSE
 #' )
 #'
@@ -88,7 +88,7 @@ source_detection <- function(target_data,
                              M,
                              X,
                              kfold = 5,
-                             C0 = 0.05,
+                             t = 0.02,
                              verbose = TRUE) {
 
   # Helper: K-fold split
@@ -143,7 +143,7 @@ source_detection <- function(target_data,
   source.loss <- if(ncol(loss.cv) > 1) colMeans(loss.cv)[1:(ncol(loss.cv)-1)] else numeric(0)
   target.valid.loss <- colMeans(loss.cv)[ncol(loss.cv)]
   T_index <- source.loss - target.valid.loss
-  threshold <- C0 * max(target.valid.loss, 0.01)
+  threshold <- t * max(target.valid.loss, 0.01)
   transfer.source.id <- which(T_index <= threshold)
 
   if(verbose) {

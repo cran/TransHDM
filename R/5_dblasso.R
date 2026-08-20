@@ -32,23 +32,9 @@
 #'   \item{P.value: Vector of p-values for coefficients}
 #' }
 #'
-#' @examples
-#' # Prepare target and source data
-#' target <- list(x = matrix(rnorm(100 * 20), 100, 20), y = rnorm(100))
-#' source <- list(x = matrix(rnorm(200 * 20), 200, 20), y = rnorm(200))
-#'
-#' # Non-transfer mode
-#' result_no_transfer <- dblasso(target = target, transfer = FALSE,
-#'                              level = 0.95, lambda = 'lambda.min')
-#' summary(result_no_transfer)
-#'
-#' # Transfer learning mode
-#' result_transfer <- dblasso(target = target, source = source, transfer = TRUE,
-#'                           level = 0.95, lambda = 'lambda.min')
-#' summary(result_transfer)
 #' @import glmnet
 #' @import foreach
-#' @export
+#' @keywords internal
 dblasso <- function(
     target,
     source = NULL,
@@ -187,7 +173,8 @@ dblasso <- function(
     c(theta, tau2)
   }
 
-  Theta.hat <- solve(diag(L[, p + 1])) %*% L[, 1:p]
+  # Theta.hat <- solve(diag(L[, p + 1])) %*% L[, 1:p]
+  Theta.hat <- L[, 1:p] / L[, p + 1]
 
   ## ---------- debiased estimator ----------
   residuals <- D$target$y - D$target$x %*% coef.hat

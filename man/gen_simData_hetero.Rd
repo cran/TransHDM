@@ -37,7 +37,7 @@ gen_simData_hetero(
 A list with the following components:
 \itemize{
 \item{\code{data}}: A data.frame of dimension \code{n × (2 + p_m + p_x)} containing outcome (Y), treatment (D), mediators (M1–Mp_m), and covariates (X1–Xp_x).
-\item{\code{coef}}: A named list of true model coefficients (\code{alpha1, alpha2, beta1, beta2, beta4}, etc.).
+\item{\code{effect}}: A named list of true total, direct, and indirect effects, exposure-mediator effects and mediator-outcome effects.
 }
 }
 \description{

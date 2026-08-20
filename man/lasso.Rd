@@ -37,19 +37,4 @@ Fits a LASSO (Least Absolute Shrinkage and Selection Operator) regression model
 under a transfer learning framework. Supports feature selection and coefficient
 estimation by combining target data and source data.
 }
-\examples{
-# Prepare target and source data
-target <- list(x = matrix(rnorm(100 * 20), 100, 20), y = rnorm(100))
-source <- list(x = matrix(rnorm(200 * 20), 200, 20), y = rnorm(200))
-
-# Non-transfer mode
-coef_no_transfer <- lasso(target = target, transfer = FALSE, lambda = 'lambda.min')
-print(coef_no_transfer)
-summary(coef_no_transfer)
-
-# Transfer learning mode
-coef_transfer <- lasso(target = target, source = source, transfer = TRUE, lambda = 'lambda.min')
-print(coef_transfer)
-summary(coef_transfer)
-
-}
+\keyword{internal}

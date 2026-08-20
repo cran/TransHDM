@@ -51,18 +51,4 @@ A list containing:
 Fits a debiased LASSO regression model under transfer learning framework, supporting feature
 selection and coefficient estimation by combining target and source data.
 }
-\examples{
-# Prepare target and source data
-target <- list(x = matrix(rnorm(100 * 20), 100, 20), y = rnorm(100))
-source <- list(x = matrix(rnorm(200 * 20), 200, 20), y = rnorm(200))
-
-# Non-transfer mode
-result_no_transfer <- dblasso(target = target, transfer = FALSE,
-                             level = 0.95, lambda = 'lambda.min')
-summary(result_no_transfer)
-
-# Transfer learning mode
-result_transfer <- dblasso(target = target, source = source, transfer = TRUE,
-                          level = 0.95, lambda = 'lambda.min')
-summary(result_transfer)
-}
+\keyword{internal}

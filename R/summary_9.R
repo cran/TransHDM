@@ -1,3 +1,26 @@
+#' Print method for TransHDM objects
+#'
+#' @param x An object of class \code{"TransHDM"}.
+#' @param ... Further arguments (currently not used).
+#'
+#' @return Invisibly returns \code{x}.
+#'
+#' @method print TransHDM
+#' @export
+print.TransHDM <- function(x, ...) {
+  n_med <- nrow(x$contributions)
+  ef <- x$effects
+  te <- ef$estimate[ef$effect == "total"]
+  pe <- ef$estimate[ef$effect == "pe"]
+  cat(sprintf(
+    "TransHDM: %d mediator(s) | TE=%.4f | IDE=%.4f | DE=%.4f | PE=%.2f%%\n",
+    n_med, te, ef$estimate[ef$effect == "indirect"],
+    ef$estimate[ef$effect == "direct"], pe * 100
+  ))
+  invisible(x)
+}
+
+
 #' Summary of TransHDM Mediation Analysis
 #'
 #' @param object An object of class \code{"TransHDM"}.
