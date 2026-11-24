@@ -1,2 +1,2 @@
-#' @importFrom stats coef glm lsfit pnorm qnorm rnorm runif
+#' @importFrom stats coef glm lsfit pnorm qnorm rnorm runif setNames
 NULL

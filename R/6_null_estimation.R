@@ -41,8 +41,8 @@ null_estimation <- function(input_pvalues, lambda = 0.5) {
   if (sum(stats::complete.cases(input_pvalues)) < nrow(input_pvalues)) {
     warning("input_pvalues contains NAs to be removed from analysis")
   }
-  input_pvalues <- input_pvalues[stats::complete.cases(input_pvalues), ]
-  if (!is.null(nrow(input_pvalues)) && nrow(input_pvalues) < 1) {
+  input_pvalues <- input_pvalues[stats::complete.cases(input_pvalues), , drop = FALSE]
+  if (nrow(input_pvalues) < 1) {
     stop("input_pvalues doesn't have valid p-values")
   }
 

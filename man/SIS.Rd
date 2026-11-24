@@ -14,15 +14,16 @@ SIS(
   topN = NULL,
   transfer = FALSE,
   verbose = TRUE,
-  ncore = 1,
-  dblasso_method = FALSE
+  ncore = 1
 )
 }
 \arguments{
 \item{target_data}{A data frame containing the target dataset. All variables must be numeric.}
 
-\item{source_data}{A list of data frames containing source datasets (optional, default: NULL).
-All variables must be numeric and have the same column names as target_data.}
+\item{source_data}{A data frame, or a list of data frames, containing source
+datasets (optional, default: NULL). All variables must be numeric and use
+the same column names as \code{target_data}. A list is row-bound into one
+source dataset before screening.}
 
 \item{Y}{Character string specifying the outcome variable name.}
 
@@ -44,18 +45,14 @@ are printed to the console.}
 
 \item{ncore}{An integer (default: 1) specifying the number of CPU cores for parallel
 computation.}
-
-\item{dblasso_method}{A logical value (default: FALSE). If TRUE, the debiased lasso
-(dblasso) is used to estimate marginal effects. If FALSE, standard linear or generalized
-linear models are used.}
 }
 \value{
 A list of class \code{"SIS"} with the following components:
 \itemize{
 \item \code{target_SIS}: A data frame containing the outcome, exposure, selected
 mediators, and covariates from the target dataset.
-\item \code{source_SIS}: A data frame containing the same variables from the source
-dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
+\item \code{source_SIS}: A data frame containing the same variables from the
+pooled source dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
 \item \code{M_ID_name_SIS}: A character vector of selected mediator names.
 \item \code{Y}: The resolved outcome variable name.
 \item \code{D}: The resolved exposure variable name.
@@ -66,13 +63,16 @@ dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
 \description{
 \strong{Step 1} of the \code{\link{TransHDM}} pipeline: dimension reduction via
 Sure Independence Screening (SIS). Mediators are ranked based on the product
-of their marginal associations with the exposure (alpha) and the outcome (beta),
-and the top-ranked mediators are retained for downstream de-biased lasso
-estimation (\code{\link{mediation_inference}}, Step 2) and joint testing
+of their marginal associations with the exposure (alpha) and the outcome (beta).
+Both associations are lasso point estimates. The top-ranked mediators are
+retained for downstream de-biased lasso estimation
+(\code{\link{mediation_inference}}, Step 2) and joint testing
 (\code{\link{joint_test}}, Step 3).
 
-The function supports transfer learning, allowing information from a source dataset
-to be leveraged to improve screening stability and robustness in the target dataset.
+The function supports transfer learning, allowing information from one or more
+source datasets to be leveraged to improve screening stability and robustness
+in the target dataset. A list of source datasets is row-bound into one source
+before screening.
 }
 \examples{
 \donttest{

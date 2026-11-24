@@ -16,15 +16,16 @@ TransHDM(
   ncore = 1,
   topN = NULL,
   use_SIS = TRUE,
-  dblasso_SIS = FALSE,
   p_cutoff = 0.05
 )
 }
 \arguments{
 \item{target_data}{A data frame containing the target dataset. All variables must be numeric.}
 
-\item{source_data}{A list of data frames containing source datasets (optional, default: NULL).
-All variables must be numeric and have the same column names as target_data.}
+\item{source_data}{A data frame, or a list of data frames, containing source
+datasets (optional, default: NULL). All variables must be numeric and use
+the same column names as \code{target_data}. A list is row-bound into one
+source dataset before screening and estimation.}
 
 \item{Y}{Character string specifying the outcome variable name.}
 
@@ -53,12 +54,6 @@ the data dimensions.}
 Sure Independence Screening (SIS) for initial variable screening. When \code{FALSE},
 the full set of mediators is used in estimation and inference.}
 
-\item{dblasso_SIS}{A logical value (default: \code{FALSE}) indicating whether
-to apply a two-stage procedure combining SIS and debiased Lasso.
-When \code{TRUE}, mediators are first screened via SIS and then
-debiased Lasso is applied to the reduced set, which is recommended for
-ultra-high-dimensional settings.}
-
 \item{p_cutoff}{A numeric value (default: 0.05) specifying the maximum p-value threshold for
 determining significant mediators.}
 }
@@ -73,7 +68,8 @@ A list with the following components:
 \item \code{beta}: Estimated mediator outcome effect
 \item \code{beta_pv}: P-value for the mediator outcome effect
 \item \code{alpha_beta}: Estimated indirect (mediation) effect
-\item \code{ab_pv}: Joint p-value for the indirect effect
+\item \code{ab_pv}: Joint p-value, \code{max(alpha_pv, beta_pv)}
+\item \code{fdr_est}: Pointwise FDR from \code{HDMT::fdr_est}
 \item \code{pa}: Proportion of the total effect mediated
 }
 \item \code{effects}: A data frame summarizing the total indirect effect,
@@ -92,7 +88,9 @@ outcome.
 The \code{TransHDM} function performs high-dimensional mediation analysis
 under a transfer learning framework. It identifies and estimates indirect
 (mediation) effects of a high-dimensional set of mediators between an
-exposure and an outcome by integrating a target dataset and a source datasets.
+exposure and an outcome by integrating a target dataset with one or more
+source datasets. Multiple source datasets are row-bound into a single
+source before screening and estimation.
 }
 \details{
 \code{TransHDM} implements a three-step workflow that can also be executed
@@ -109,6 +107,16 @@ applies joint multiple testing with FDR control to identify
 significant mediators and computes effect summaries.
 }
 Set \code{use_SIS = FALSE} to skip Step 1 and use all mediators directly.
+A list of source datasets is row-bound into one source before these steps.
+Estimation then proceeds exactly as in the single-source procedure.
+
+The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+For Gaussian linear models, it assumes unit error variance.
+Under the required source-target heterogeneity conditions, pooled
+source and target design information is used to estimate the
+correlation structure, while the debiasing correction is based
+on target-domain data. This assumption is not automatically
+verified by the function.
 }
 \examples{
 \donttest{

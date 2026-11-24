@@ -3,17 +3,22 @@
 #' @description
 #' **Step 1** of the \code{\link{TransHDM}} pipeline: dimension reduction via
 #' Sure Independence Screening (SIS). Mediators are ranked based on the product
-#' of their marginal associations with the exposure (alpha) and the outcome (beta),
-#' and the top-ranked mediators are retained for downstream de-biased lasso
-#' estimation (\code{\link{mediation_inference}}, Step 2) and joint testing
+#' of their marginal associations with the exposure (alpha) and the outcome (beta).
+#' Both associations are lasso point estimates. The top-ranked mediators are
+#' retained for downstream de-biased lasso estimation
+#' (\code{\link{mediation_inference}}, Step 2) and joint testing
 #' (\code{\link{joint_test}}, Step 3).
 #'
-#' The function supports transfer learning, allowing information from a source dataset
-#' to be leveraged to improve screening stability and robustness in the target dataset.
+#' The function supports transfer learning, allowing information from one or more
+#' source datasets to be leveraged to improve screening stability and robustness
+#' in the target dataset. A list of source datasets is row-bound into one source
+#' before screening.
 #'
 #' @param target_data A data frame containing the target dataset. All variables must be numeric.
-#' @param source_data A list of data frames containing source datasets (optional, default: NULL).
-#'   All variables must be numeric and have the same column names as target_data.
+#' @param source_data A data frame, or a list of data frames, containing source
+#'   datasets (optional, default: NULL). All variables must be numeric and use
+#'   the same column names as \code{target_data}. A list is row-bound into one
+#'   source dataset before screening.
 #' @param Y Character string specifying the outcome variable name.
 #' @param D Character string specifying the exposure (treatment) variable name.
 #' @param M Character vector specifying mediator variable names.
@@ -27,16 +32,13 @@
 #' are printed to the console.
 #' @param ncore An integer (default: 1) specifying the number of CPU cores for parallel
 #' computation.
-#' @param dblasso_method A logical value (default: FALSE). If TRUE, the debiased lasso
-#' (dblasso) is used to estimate marginal effects. If FALSE, standard linear or generalized
-#' linear models are used.
 #'
 #' @return A list of class \code{"SIS"} with the following components:
 #' \itemize{
 #'   \item \code{target_SIS}: A data frame containing the outcome, exposure, selected
 #'   mediators, and covariates from the target dataset.
-#'   \item \code{source_SIS}: A data frame containing the same variables from the source
-#'   dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
+#'   \item \code{source_SIS}: A data frame containing the same variables from the
+#'   pooled source dataset if \code{transfer = TRUE}; otherwise \code{NULL}.
 #'   \item \code{M_ID_name_SIS}: A character vector of selected mediator names.
 #'   \item \code{Y}: The resolved outcome variable name.
 #'   \item \code{D}: The resolved exposure variable name.
@@ -101,17 +103,35 @@ SIS <- function(
     topN = NULL,
     transfer = FALSE,
     verbose = TRUE,
-    ncore = 1,
-    dblasso_method = FALSE
+    ncore = 1
 ){
+
+  checked <- .check_analysis_input(
+    target_data = target_data,
+    source_data = source_data,
+    Y = Y, D = D, M = M, X = X,
+    transfer = transfer,
+    ncore = ncore,
+    topN = topN,
+    verbose = verbose
+  )
+  Y <- checked$Y
+  D <- checked$D
+  M <- checked$M
+  X <- checked$X
+
+  source_data <- .combine_sources(
+    source_data,
+    verbose = verbose && isTRUE(transfer)
+  )
 
   if (verbose)
     message("Step 1: Sure Independence Screening ...  (",
             format(Sys.time(), "%X"), ")")
 
   if (ncore > 1) {
-    doParallel::registerDoParallel(ncore)
-    on.exit(doParallel::stopImplicitCluster(), add = TRUE)
+    cl <- .start_cluster(ncore)
+    on.exit(.stop_cluster(cl), add = TRUE)
   }
 
 
@@ -141,6 +161,9 @@ SIS <- function(
     d_0 <- topN
   }
   d_0 <- min(p_m, d_0)
+  if (d_0 < 1) {
+    stop("No mediator passes screening. Increase 'topN' or check the mediator list.")
+  }
 
   ## ---------- extract matrices ----------
   Y_t <- target_data[[Y]]
@@ -172,87 +195,30 @@ SIS <- function(
       colnames(x_t)[1] <- M[i]
 
       if (!transfer) {
-
-        if (!dblasso_method) {
-          # no trans, no db
-          fit <- lasso(target = list(x = x_t, y = Y_t))
-          beta_SIS[i] <- fit[M[i]]
-          # message("mediator ",i, "\t beta",beta_SIS[i])
-        } else {
-          # no trans, db
-          beta_SIS[i] <- dblasso(
-            target = list(x = x_t, y = Y_t)
-          )$dbcoef.hat[M[i]]
-          # message("mediator ",i, "\t beta",beta_SIS[i])
-        }
-
+        fit <- lasso(target = list(x = x_t, y = Y_t))
       } else {
         x_s <- cbind(M_s[, i], D_s, X_s)
         colnames(x_s)[1] <- M[i]
-
-        if (dblasso_method) {
-          # trans, db
-          beta_SIS[i] <- dblasso(
-            target = list(x = x_t, y = Y_t),
-            source = list(x = x_s, y = Y_s),
-            transfer = TRUE
-          )$dbcoef.hat[M[i]]
-          # message("mediator ",i, "\t beta",beta_SIS[i])
-        }
-        else{
-          #trans, no db
-          fit <- lasso(target = list(x = x_t, y = Y_t),
-                       source = list(x = x_s, y = Y_s),
-                       transfer = TRUE)
-          beta_SIS[i] <- fit[M[i]]
-          # message("mediator ",i, "\t beta",beta_SIS[i])
-        }
+        fit <- lasso(
+          target = list(x = x_t, y = Y_t),
+          source = list(x = x_s, y = Y_s),
+          transfer = TRUE
+        )
       }
+      beta_SIS[i] <- fit[M[i]]
     }
 
   } else {
 
-    beta_SIS <- foreach::foreach(
-      i = seq_len(p_m),
-      .combine = "c",
-      .packages = c("stats", "glmnet","foreach")
-      # .export = c("dblasso","lasso")
-    ) %dopar% {
-
-      x_t <- cbind(M_t[, i], D_t, X_t)
-      colnames(x_t)[1] <- M[i]
-
-      if (!transfer) {
-
-        if (!dblasso_method) {
-          fit <- lasso(target = list(x = x_t, y = Y_t))
-          fit[M[i]]
-        } else {
-          dblasso(
-            target = list(x = x_t, y = Y_t)
-          )$dbcoef.hat[M[i]]
-        }
-
-      } else {
-
-        x_s <- cbind(M_s[, i], D_s, X_s)
-        colnames(x_s)[1] <- M[i]
-
-        if (dblasso_method) {
-          dblasso(
-            target = list(x = x_t, y = Y_t),
-            source = list(x = x_s, y = Y_s),
-            transfer = TRUE
-          )$dbcoef.hat[M[i]]
-        }
-        else{
-          fit <- lasso(target = list(x = x_t, y = Y_t),
-                       source = list(x = x_s, y = Y_s),
-                       transfer = TRUE)
-          fit[M[i]]
-        }
-      }
-    }
+    beta_SIS <- unlist(parallel::parLapply(
+      cl, seq_len(p_m), .sis_beta_i,
+      M_t = M_t, D_t = D_t, X_t = X_t, M = M, Y_t = Y_t,
+      transfer = transfer,
+      M_s = if (transfer) M_s else NULL,
+      D_s = if (transfer) D_s else NULL,
+      X_s = if (transfer) X_s else NULL,
+      Y_s = if (transfer) Y_s else NULL
+    ), use.names = FALSE)
     names(beta_SIS) <- M
   }
 
@@ -273,80 +239,26 @@ SIS <- function(
     for (i in seq_len(p_m)) {
 
       if (!transfer) {
-
-        if (!dblasso_method) {
-          # fit <- glm(M_t[, i] ~ ., data = as.data.frame(DX_t))
-          # alpha_SIS[i] <- coef(fit)[D]
-          fit <- lasso(target = list(x = DX_t, y = M_t[, i]))
-          alpha_SIS[i] <- fit[D]
-          # message("mediator ",i, "\t alpha",alpha_SIS[i])
-        } else {
-          alpha_SIS[i] <- dblasso(
-            target = list(x = DX_t, y = M_t[, i])
-          )$dbcoef.hat[D]
-          # message("mediator ",i, "\t alpha",alpha_SIS[i])
-        }
-
+        fit <- lasso(target = list(x = DX_t, y = M_t[, i]))
       } else {
-        if(dblasso_method){
-          alpha_SIS[i] <- dblasso(
-            target = list(x = DX_t, y = M_t[, i]),
-            source = list(x = DX_s, y = M_s[, i]),
-            transfer = TRUE
-          )$dbcoef.hat[D]
-          # message("mediator ",i, "\t alpha",alpha_SIS[i])
-        }
-        else{
-          fit <- lasso(target = list(x = DX_t, y = M_t[, i]),
-                       source = list(x = DX_s, y = M_s[, i]),
-                       transfer = TRUE)
-          alpha_SIS[i] <- fit[D]
-          # message("mediator ",i, "\t alpha",alpha_SIS[i])
-        }
+        fit <- lasso(
+          target = list(x = DX_t, y = M_t[, i]),
+          source = list(x = DX_s, y = M_s[, i]),
+          transfer = TRUE
+        )
       }
+      alpha_SIS[i] <- fit[D]
     }
 
   } else {
 
-    alpha_SIS <- foreach::foreach(
-      i = seq_len(p_m),
-      .combine = "c",
-      .packages = c("stats", "glmnet","foreach")
-      # .export = c("dblasso","lasso")
-    ) %dopar% {
-
-      if (!transfer) {
-
-        if (!dblasso_method) {
-          # fit <- glm(M_t[, i] ~ ., data = as.data.frame(DX_t))
-          # coef(fit)[D]
-          fit <- lasso(target = list(x = DX_t, y = M_t[, i]))
-          fit[D]
-        } else {
-          dblasso(
-            target = list(x = DX_t, y = M_t[, i])
-          )$dbcoef.hat[D]
-        }
-
-      } else {
-
-        if(dblasso_method){
-          dblasso(
-            target = list(x = DX_t, y = M_t[, i]),
-            source = list(x = DX_s, y = M_s[, i]),
-            transfer = TRUE
-          )$dbcoef.hat[D]
-        }
-        else{
-          fit <- lasso(target = list(x = DX_t, y = M_t[, i]),
-                       source = list(x = DX_s, y = M_s[, i]),
-                       transfer = TRUE)
-          fit[D]
-        }
-
-      }
-    }
-
+    alpha_SIS <- unlist(parallel::parLapply(
+      cl, seq_len(p_m), .sis_alpha_i,
+      DX_t = DX_t, M_t = M_t, D = D,
+      transfer = transfer,
+      DX_s = if (transfer) DX_s else NULL,
+      M_s = if (transfer) M_s else NULL
+    ), use.names = FALSE)
     names(alpha_SIS) <- M
   }
 
@@ -357,6 +269,9 @@ SIS <- function(
   ab_SIS <- alpha_SIS * beta_SIS
   ID_SIS <- order(abs(ab_SIS), decreasing = TRUE)[seq_len(d_0)]
   M_ID_name_SIS <- M[ID_SIS]
+  if (length(M_ID_name_SIS) == 0) {
+    stop("No mediator passes screening. Increase 'topN' or check the mediator list.")
+  }
 
   target_SIS <- target_data[, c(Y, D, M_ID_name_SIS, X), drop = FALSE]
   source_SIS <- if (transfer)
@@ -380,5 +295,37 @@ SIS <- function(
   )
   class(res) <- "SIS"
   return(res)
+}
+
+.sis_beta_i <- function(i, M_t, D_t, X_t, M, Y_t, transfer,
+                        M_s = NULL, D_s = NULL, X_s = NULL, Y_s = NULL) {
+  x_t <- cbind(M_t[, i], D_t, X_t)
+  colnames(x_t)[1] <- M[i]
+  if (!transfer) {
+    fit <- lasso(target = list(x = x_t, y = Y_t))
+  } else {
+    x_s <- cbind(M_s[, i], D_s, X_s)
+    colnames(x_s)[1] <- M[i]
+    fit <- lasso(
+      target = list(x = x_t, y = Y_t),
+      source = list(x = x_s, y = Y_s),
+      transfer = TRUE
+    )
+  }
+  unname(fit[M[i]])
+}
+
+.sis_alpha_i <- function(i, DX_t, M_t, D, transfer,
+                         DX_s = NULL, M_s = NULL) {
+  if (!transfer) {
+    fit <- lasso(target = list(x = DX_t, y = M_t[, i]))
+  } else {
+    fit <- lasso(
+      target = list(x = DX_t, y = M_t[, i]),
+      source = list(x = DX_s, y = M_s[, i]),
+      transfer = TRUE
+    )
+  }
+  unname(fit[D])
 }
 

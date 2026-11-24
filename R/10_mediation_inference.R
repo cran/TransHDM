@@ -12,8 +12,18 @@
 #'     exposure-mediator effects by regressing each mediator on \code{D}
 #'     and \code{X}.
 #' }
-#' Both steps support transfer learning. Results are passed to
+#' Both steps support transfer learning. A list of source datasets is row-bound
+#' into one source before estimation. Results are passed to
 #' \code{\link{joint_test}} (Step 3) for multiple testing.
+#'
+#' @details
+#' The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+#' For Gaussian linear models, it assumes unit error variance.
+#' Under the required source-target heterogeneity conditions, pooled
+#' source and target design information is used to estimate the
+#' correlation structure, while the debiasing correction is based
+#' on target-domain data. This assumption is not automatically
+#' verified by the function.
 #'
 #' @param screen_result An object of class \code{"SIS"} returned by
 #'   \code{\link{SIS}}. When provided, \code{Y}, \code{D}, \code{M}, and
@@ -23,9 +33,10 @@
 #'   \code{X} must be supplied explicitly.
 #' @param target_data A data frame containing the target dataset. Required
 #'   when \code{screen_result = NULL}. Ignored otherwise.
-#' @param source_data A data frame containing the source dataset (optional,
-#'   default: \code{NULL}). Used only when \code{transfer = TRUE} and
-#'   \code{screen_result = NULL}.
+#' @param source_data A data frame, or a list of data frames, containing source
+#'   datasets (optional, default: \code{NULL}). Used only when
+#'   \code{transfer = TRUE} and \code{screen_result = NULL}. A list is
+#'   row-bound into one source dataset before estimation.
 #' @param Y Character string specifying the outcome variable name. Required
 #'   only when \code{screen_result = NULL}; otherwise extracted from
 #'   \code{screen_result}.
@@ -115,6 +126,21 @@ mediation_inference <- function(
       stop("'screen_result' does not contain Y, D, M, or X. ",
            "Please update the SIS object or provide them explicitly.")
     }
+    if (isTRUE(transfer) && is.null(source_SIS)) {
+      stop("'transfer = TRUE' requires source data, but the screening result contains none.")
+    }
+    M_present <- intersect(M, colnames(target_SIS))
+    if (length(M_present) == 0) {
+      stop("No mediator passes screening. Increase 'topN' or check that mediator names are present in the data.")
+    }
+    .check_analysis_input(
+      target_data = target_SIS,
+      source_data = source_SIS,
+      Y = Y, D = D, M = M_present, X = X,
+      transfer = isTRUE(transfer) && !is.null(source_SIS),
+      ncore = ncore,
+      verbose = verbose
+    )
   } else {
     # Direct-data path: use raw data without screening
     if (is.null(target_data)) {
@@ -123,8 +149,23 @@ mediation_inference <- function(
     if (is.null(M) || is.null(Y) || is.null(D) || is.null(X)) {
       stop("'Y', 'D', 'M', and 'X' must be provided when 'target_data' is given.")
     }
+    checked <- .check_analysis_input(
+      target_data = target_data,
+      source_data = source_data,
+      Y = Y, D = D, M = M, X = X,
+      transfer = transfer,
+      ncore = ncore,
+      verbose = verbose
+    )
+    Y <- checked$Y
+    D <- checked$D
+    M <- checked$M
+    X <- checked$X
     target_SIS <- target_data
-    source_SIS <- source_data
+    source_SIS <- .combine_sources(
+      source_data,
+      verbose = verbose && isTRUE(transfer)
+    )
   }
 
   # ---- Determine mediators retained after screening ----
@@ -132,7 +173,7 @@ mediation_inference <- function(
   p_m_SIS <- length(M_SIS)
 
   if (p_m_SIS == 0) {
-    stop("No mediators retained after screening. Check your 'M' and data.")
+    stop("No mediator passes screening. Increase 'topN' or check that mediator names are present in the data.")
   }
 
   if (verbose && p_m_SIS < length(M)) {
@@ -216,44 +257,20 @@ mediation_inference <- function(
       P_alpha_SIS[m]   <- fit$P.value[D]
     }
   } else {
-    doParallel::registerDoParallel(ncore)
+    cl <- .start_cluster(ncore)
+    on.exit(.stop_cluster(cl), add = TRUE)
 
-    alpha_res <- foreach::foreach(
-      m = M_SIS,
-      .combine = rbind,
-      .packages = c("glmnet", "MASS", "foreach", "caret", "qvalue", "HDMT")
-    ) %dopar% {
-      target_m <- list(
-        x = as.matrix(target_SIS[, mediator_x, drop = FALSE]),
-        y = target_SIS[[m]]
-      )
-      if (transfer && !is.null(source_SIS)) {
-        source_m <- list(
-          x = as.matrix(source_SIS[, mediator_x, drop = FALSE]),
-          y = source_SIS[[m]]
-        )
-        fit <- dblasso(
-          target = target_m,
-          source = source_m,
-          transfer = TRUE
-        )
-      } else {
-        fit <- dblasso(
-          target = target_m,
-          transfer = FALSE
-        )
-      }
-      matrix(
-        c(fit$P.value[D], fit$dbcoef.hat[D]),
-        nrow = 1,
-        dimnames = list(NULL, c("p", "a"))
-      )
-    }
+    alpha_res <- do.call(rbind, parallel::parLapply(
+      cl, M_SIS, .mediator_alpha_i,
+      target_SIS = target_SIS,
+      mediator_x = mediator_x,
+      D = D,
+      transfer = transfer,
+      source_SIS = source_SIS
+    ))
 
     P_alpha_SIS[M_SIS]   <- alpha_res[, "p"]
     alpha_SIS_est[M_SIS] <- alpha_res[, "a"]
-
-    closeAllConnections()
   }
 
   if (verbose) {
@@ -274,4 +291,26 @@ mediation_inference <- function(
   )
   class(result) <- "mediation_inference"
   return(result)
+}
+
+.mediator_alpha_i <- function(m, target_SIS, mediator_x, D, transfer,
+                              source_SIS = NULL) {
+  target_m <- list(
+    x = as.matrix(target_SIS[, mediator_x, drop = FALSE]),
+    y = target_SIS[[m]]
+  )
+  if (transfer && !is.null(source_SIS)) {
+    source_m <- list(
+      x = as.matrix(source_SIS[, mediator_x, drop = FALSE]),
+      y = source_SIS[[m]]
+    )
+    fit <- dblasso(
+      target = target_m,
+      source = source_m,
+      transfer = TRUE
+    )
+  } else {
+    fit <- dblasso(target = target_m, transfer = FALSE)
+  }
+  c(p = unname(fit$P.value[D]), a = unname(fit$dbcoef.hat[D]))
 }

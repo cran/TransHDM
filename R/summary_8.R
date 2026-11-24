@@ -52,7 +52,9 @@ print.summary.SIS <- function(x, ...) {
 
   ## selected mediators
   cat("Selected mediators:\n")
-  cat("  Number selected:", x$n_selected %||% 0, "\n")
+  n_selected <- x$n_selected
+  if (is.null(n_selected)) n_selected <- 0L
+  cat("  Number selected:", n_selected, "\n")
 
   if (!is.null(x$selected_mediators) && length(x$selected_mediators) > 0) {
     names_txt <- paste(x$selected_mediators, collapse = ", ")

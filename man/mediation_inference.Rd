@@ -28,9 +28,10 @@ directly without screening, and \code{Y}, \code{D}, \code{M},
 \item{target_data}{A data frame containing the target dataset. Required
 when \code{screen_result = NULL}. Ignored otherwise.}
 
-\item{source_data}{A data frame containing the source dataset (optional,
-default: \code{NULL}). Used only when \code{transfer = TRUE} and
-\code{screen_result = NULL}.}
+\item{source_data}{A data frame, or a list of data frames, containing source
+datasets (optional, default: \code{NULL}). Used only when
+\code{transfer = TRUE} and \code{screen_result = NULL}. A list is
+row-bound into one source dataset before estimation.}
 
 \item{Y}{Character string specifying the outcome variable name. Required
 only when \code{screen_result = NULL}; otherwise extracted from
@@ -84,8 +85,18 @@ the exposure \code{D}, and covariates \code{X}.
 exposure-mediator effects by regressing each mediator on \code{D}
 and \code{X}.
 }
-Both steps support transfer learning. Results are passed to
+Both steps support transfer learning. A list of source datasets is row-bound
+into one source before estimation. Results are passed to
 \code{\link{joint_test}} (Step 3) for multiple testing.
+}
+\details{
+The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+For Gaussian linear models, it assumes unit error variance.
+Under the required source-target heterogeneity conditions, pooled
+source and target design information is used to estimate the
+correlation structure, while the debiasing correction is based
+on target-domain data. This assumption is not automatically
+verified by the function.
 }
 \examples{
 \donttest{

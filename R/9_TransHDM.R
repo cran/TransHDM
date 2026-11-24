@@ -4,7 +4,9 @@
 #' The \code{TransHDM} function performs high-dimensional mediation analysis
 #' under a transfer learning framework. It identifies and estimates indirect
 #' (mediation) effects of a high-dimensional set of mediators between an
-#' exposure and an outcome by integrating a target dataset and a source datasets.
+#' exposure and an outcome by integrating a target dataset with one or more
+#' source datasets. Multiple source datasets are row-bound into a single
+#' source before screening and estimation.
 #'
 #' @details
 #' \code{TransHDM} implements a three-step workflow that can also be executed
@@ -21,13 +23,25 @@
 #'     significant mediators and computes effect summaries.
 #' }
 #' Set \code{use_SIS = FALSE} to skip Step 1 and use all mediators directly.
+#' A list of source datasets is row-bound into one source before these steps.
+#' Estimation then proceeds exactly as in the single-source procedure.
+#'
+#' The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+#' For Gaussian linear models, it assumes unit error variance.
+#' Under the required source-target heterogeneity conditions, pooled
+#' source and target design information is used to estimate the
+#' correlation structure, while the debiasing correction is based
+#' on target-domain data. This assumption is not automatically
+#' verified by the function.
 #'
 #' @seealso \code{\link{SIS}}, \code{\link{mediation_inference}},
 #'   \code{\link{joint_test}}
 #'
 #' @param target_data A data frame containing the target dataset. All variables must be numeric.
-#' @param source_data A list of data frames containing source datasets (optional, default: NULL).
-#'   All variables must be numeric and have the same column names as target_data.
+#' @param source_data A data frame, or a list of data frames, containing source
+#'   datasets (optional, default: NULL). All variables must be numeric and use
+#'   the same column names as \code{target_data}. A list is row-bound into one
+#'   source dataset before screening and estimation.
 #' @param Y Character string specifying the outcome variable name.
 #' @param D Character string specifying the exposure (treatment) variable name.
 #' @param M Character vector specifying mediator variable names.
@@ -46,11 +60,6 @@
 #' @param use_SIS A logical value (default: \code{TRUE}) indicating whether to apply
 #'   Sure Independence Screening (SIS) for initial variable screening. When \code{FALSE},
 #'    the full set of mediators is used in estimation and inference.
-#' @param dblasso_SIS A logical value (default: \code{FALSE}) indicating whether
-#'   to apply a two-stage procedure combining SIS and debiased Lasso.
-#'   When \code{TRUE}, mediators are first screened via SIS and then
-#'   debiased Lasso is applied to the reduced set, which is recommended for
-#'   ultra-high-dimensional settings.
 #' @param p_cutoff A numeric value (default: 0.05) specifying the maximum p-value threshold for
 #'   determining significant mediators.
 #'
@@ -64,7 +73,8 @@
 #'       \item \code{beta}: Estimated mediator outcome effect
 #'       \item \code{beta_pv}: P-value for the mediator outcome effect
 #'       \item \code{alpha_beta}: Estimated indirect (mediation) effect
-#'       \item \code{ab_pv}: Joint p-value for the indirect effect
+#'       \item \code{ab_pv}: Joint p-value, \code{max(alpha_pv, beta_pv)}
+#'       \item \code{fdr_est}: Pointwise FDR from \code{HDMT::fdr_est}
 #'       \item \code{pa}: Proportion of the total effect mediated
 #'     }
 #'   \item \code{effects}: A data frame summarizing the total indirect effect,
@@ -78,8 +88,6 @@
 #'     \code{alpha}, \code{alpha_pv}, \code{beta}, \code{beta_pv}, and
 #'     \code{significant} (logical).
 #' }
-#'
-#' @importFrom stats setNames
 #'
 #' @references
 #' Pan L, Liu Y, Huang C, Lin R, Yu Y, Qin G.
@@ -129,23 +137,32 @@ TransHDM <- function(
     ncore = 1,
     topN = NULL,
     use_SIS =TRUE,
-    dblasso_SIS = FALSE,
     p_cutoff = 0.05
 ) {
 
-  # ---- resolve variables ----
-  Y <- .resolve_cols(target_data, Y, "Y")
-  D <- .resolve_cols(target_data, D, "D")
-  M <- .resolve_cols(target_data, M, "M")
-  X <- .resolve_cols(target_data, X, "X")
+  checked <- .check_analysis_input(
+    target_data = target_data,
+    source_data = source_data,
+    Y = Y, D = D, M = M, X = X,
+    transfer = transfer,
+    ncore = ncore,
+    topN = topN,
+    p_cutoff = p_cutoff,
+    verbose = verbose,
+    use_SIS = use_SIS
+  )
+  Y <- checked$Y
+  D <- checked$D
+  M <- checked$M
+  X <- checked$X
 
-  stopifnot(length(Y) == 1, length(D) == 1, length(M) >= 1)
+  source_data <- .combine_sources(
+    source_data,
+    verbose = verbose && isTRUE(transfer)
+  )
 
-  p_m <- length(M)
-
-  # ---- Step 1: SIS ----
-  if(use_SIS){
-    SIS_result <- SIS(
+  if (use_SIS) {
+    screen_result <- SIS(
       target_data = target_data,
       source_data = source_data,
       Y = Y,
@@ -155,241 +172,109 @@ TransHDM <- function(
       topN = topN,
       transfer = transfer,
       verbose = verbose,
-      ncore = ncore,
-      dblasso_method = dblasso_SIS
+      ncore = ncore
     )
-    target_SIS <- SIS_result$target_SIS
-    source_SIS <- SIS_result$source_SIS
-  } else{
-    if (verbose)
+    infer <- mediation_inference(
+      screen_result = screen_result,
+      transfer = transfer,
+      verbose = verbose,
+      ncore = ncore
+    )
+  } else {
+    if (verbose) {
       message("Step 1: SIS skipped; using full set of mediators.")
-
-    target_SIS <- target_data
-    source_SIS <- source_data
-  }
-
-
-
-  # ---- Step 2: De-biased Lasso ----
-  ## mediators retained after SIS
-  M_SIS <- intersect(M, colnames(target_SIS))
-  p_m_SIS <- length(M_SIS)
-
-  if (p_m_SIS == 0)
-    stop("No mediators retained after SIS. Try increasing topN.")
-
-  if (verbose && p_m_SIS < length(M))
-    message("After SIS, ", p_m_SIS, " / ", length(M), " mediators are retained.")
-
-  if (verbose)
-    message("Step 2: De-biased Lasso Estimates ... (",
-            format(Sys.time(), "%X"), ")")
-
-  # ---------- 2.1 Outcome model (beta) ----------
-  outcome_x <- setdiff(colnames(target_SIS), Y)
-
-  target_outcome <- list(
-    x = as.matrix(target_SIS[, outcome_x, drop = FALSE]),
-    y = target_SIS[[Y]]
-  )
-
-  if (transfer) {
-    source_outcome <- list(
-      x = as.matrix(source_SIS[, outcome_x, drop = FALSE]),
-      y = source_SIS[[Y]]
-    )
-    DBLASSO_fit <- dblasso(
-      target = target_outcome,
-      source = source_outcome,
-      transfer = TRUE
-    )
-  } else {
-    DBLASSO_fit <- dblasso(
-      target = target_outcome,
-      transfer = FALSE
-    )
-  }
-
-  DE_est <- DBLASSO_fit$dbcoef.hat[D]
-
-  beta_SIS_est <- setNames(rep(0, length(M)), M)
-  P_beta_SIS   <- setNames(rep(1, length(M)), M)
-
-  beta_SIS_est[M_SIS] <- DBLASSO_fit$dbcoef.hat[M_SIS]
-  P_beta_SIS[M_SIS]   <- DBLASSO_fit$P.value[M_SIS]
-
-  if (verbose)
-    message("Estimation of mediator-outcome effects in the outcome model completed.")
-
-
-  # ---------- 2.2 Mediator models (alpha) ----------
-  alpha_SIS_est <- setNames(rep(0, length(M)), M)
-  P_alpha_SIS   <- setNames(rep(1, length(M)), M)
-
-  mediator_x <- c(D, X)
-  mediator_x <- intersect(mediator_x, colnames(target_SIS))
-
-  if (ncore == 1) {
-    for (m in M_SIS) {
-      target_m <- list(
-        x = as.matrix(target_SIS[, mediator_x, drop = FALSE]),
-        y = target_SIS[[m]]
-      )
-      if (transfer) {
-        source_m <- list(
-          x = as.matrix(source_SIS[, mediator_x, drop = FALSE]),
-          y = source_SIS[[m]]
-        )
-        fit <- dblasso(
-          target = target_m,
-          source = source_m,
-          transfer = TRUE
-        )
-      } else {
-        fit <- dblasso(
-          target = target_m,
-          transfer = FALSE
-        )
-      }
-      alpha_SIS_est[m] <- fit$dbcoef.hat[D]
-      P_alpha_SIS[m]   <- fit$P.value[D]
     }
-
-  } else {
-
-    doParallel::registerDoParallel(ncore)
-
-    alpha_res <- foreach::foreach(
-      m = M_SIS,
-      .combine = rbind,
-      .packages = c("glmnet", "MASS", "foreach", "caret", "qvalue", "HDMT")
-    ) %dopar% {
-
-      target_m <- list(
-        x = as.matrix(target_SIS[, mediator_x, drop = FALSE]),
-        y = target_SIS[[m]]
-      )
-
-      if (transfer) {
-        source_m <- list(
-          x = as.matrix(source_SIS[, mediator_x, drop = FALSE]),
-          y = source_SIS[[m]]
-        )
-        fit <- dblasso(
-          target = target_m,
-          source = source_m,
-          transfer = TRUE
-        )
-      } else {
-        fit <- dblasso(
-          target = target_m,
-          transfer = FALSE
-        )
-      }
-
-      # c(p = fit$P.value[D], a = fit$dbcoef.hat[D])
-      matrix(
-        c(fit$P.value[D], fit$dbcoef.hat[D]),
-        nrow = 1,
-        dimnames = list(NULL, c("p", "a"))
-      )
-    }
-
-    P_alpha_SIS[M_SIS]   <- alpha_res[, "p"]
-    alpha_SIS_est[M_SIS] <- alpha_res[, "a"]
-
-    closeAllConnections()
+    infer <- mediation_inference(
+      target_data = target_data,
+      source_data = source_data,
+      Y = Y,
+      D = D,
+      M = M,
+      X = X,
+      transfer = transfer,
+      verbose = verbose,
+      ncore = ncore
+    )
   }
 
-  if (verbose)
-    message("Estimation of exposure-mediator effects in the mediator model completed.")
-
-
-  # ---- Step 3: Multiple testing ----
-  if (verbose)
-    message("Step 3: Multiple-testing procedure ... (",
-            format(Sys.time(), "%X"), ")")
-
-  PA <- cbind(P_alpha_SIS[M_SIS], P_beta_SIS[M_SIS])
-  P_value <- apply(PA, 1, max)
-
-  # input_pvalues <- PA + matrix(runif(length(PA), 0, 1e-10), ncol = 2)
-  N0 <- dim(PA)[1] * dim(PA)[2]
-  input_pvalues <- PA + matrix(runif(N0, 0, 10^{-10}), dim(PA)[1], 2)
-
-  nullprop <- null_estimation(input_pvalues)
-
-  fdrcut <- HDMT::fdr_est(
-    nullprop$alpha00,
-    nullprop$alpha01,
-    nullprop$alpha10,
-    nullprop$alpha1,
-    nullprop$alpha2,
-    input_pvalues,
-    exact = 0
+  joint_test(
+    inference_result = infer,
+    p_cutoff = p_cutoff,
+    verbose = verbose
   )
-
-  ID_fdr <- which(fdrcut <= p_cutoff)
-  selected_M <- M_SIS[ID_fdr]
-
-  alpha_hat_est <- alpha_SIS_est[selected_M]
-  beta_hat_est  <- beta_SIS_est[selected_M]
-  ab_pv <- P_value[ID_fdr]
-
-  # ---- Effects ----
-  alpha_beta_hat_est <- alpha_hat_est * beta_hat_est
-
-  IDE_est <- setNames(rep(0, p_m), M)
-  IDE_est[selected_M] <- alpha_beta_hat_est
-
-  TE_est <- sum(IDE_est) + DE_est
-  PE_est <- sum(IDE_est) / TE_est
-
-  effects <- data.frame(
-    effect = c("indirect", "direct", "total", "pe"),
-    estimate = c(sum(IDE_est), DE_est, TE_est, PE_est)
-  )
-
-  contributions <- data.frame(
-    mediator = selected_M,
-    alpha = alpha_hat_est,
-    alpha_pv = P_alpha_SIS[selected_M],
-    beta = beta_hat_est,
-    beta_pv = P_beta_SIS[selected_M],
-    alpha_beta = alpha_beta_hat_est,
-    ab_pv = ab_pv,
-    pa = alpha_beta_hat_est / TE_est,
-    row.names = NULL
-  )
-
-  # All SIS-screened mediators (significant + non-significant)
-  all_mediators <- data.frame(
-    mediator    = M_SIS,
-    alpha       = alpha_SIS_est[M_SIS],
-    alpha_pv    = P_alpha_SIS[M_SIS],
-    beta        = beta_SIS_est[M_SIS],
-    beta_pv     = P_beta_SIS[M_SIS],
-    significant = M_SIS %in% selected_M,
-    row.names   = NULL,
-    stringsAsFactors = FALSE
-  )
-
-  if (verbose && length(selected_M) > 0)
-    message("Identified mediator(s): ",
-            paste(selected_M, collapse = ", "))
-
-  fit <- list(
-    contributions = contributions,
-    effects       = effects,
-    IDE_est       = IDE_est,
-    DE_est        = DE_est,
-    all_mediators = all_mediators
-  )
-  class(fit) <- "TransHDM"
-  return(fit)
 }
 
 
+
+.start_cluster <- function(ncore) {
+  cl <- parallel::makeCluster(ncore)
+  lib_paths <- .libPaths()
+  tryCatch(
+    {
+      parallel::clusterExport(cl, "lib_paths", envir = environment())
+      parallel::clusterEvalQ(cl, {
+        .libPaths(lib_paths)
+        loadNamespace("TransHDM")
+        NULL
+      })
+    },
+    error = function(e) {
+      parallel::stopCluster(cl)
+      stop(e)
+    }
+  )
+  cl
+}
+
+.stop_cluster <- function(cl) {
+  if (is.null(cl)) {
+    return(invisible(NULL))
+  }
+  parallel::stopCluster(cl)
+  invisible(NULL)
+}
+
+.combine_sources <- function(source_data, verbose = FALSE) {
+  if (is.null(source_data)) {
+    return(NULL)
+  }
+  if (is.data.frame(source_data)) {
+    return(source_data)
+  }
+  if (!is.list(source_data) || length(source_data) == 0) {
+    stop("'source_data' must be a data frame or a list of data frames.")
+  }
+  if (!all(vapply(source_data, is.data.frame, logical(1)))) {
+    stop("Each element of 'source_data' must be a data frame.")
+  }
+  if (length(source_data) == 1) {
+    return(source_data[[1]])
+  }
+
+  ref <- colnames(source_data[[1]])
+  same_cols <- vapply(source_data, function(df) {
+    identical(sort(colnames(df)), sort(ref))
+  }, logical(1))
+  if (!all(same_cols)) {
+    stop(
+      "All source datasets must contain the same columns. ",
+      "Mismatched source index: ",
+      paste(which(!same_cols), collapse = ", "),
+      "."
+    )
+  }
+
+  source_data <- lapply(source_data, function(df) df[, ref, drop = FALSE])
+  combined <- do.call(rbind, c(source_data, list(make.row.names = FALSE)))
+
+  if (verbose) {
+    message(
+      "Combining ", length(source_data),
+      " source datasets into one source (n = ", nrow(combined), ")."
+    )
+  }
+  combined
+}
 
 .resolve_cols <- function(data, cols, name) {
   if (is.null(cols)) return(NULL)
@@ -412,5 +297,148 @@ TransHDM <- function(
   }
 
   stop(sprintf("%s must be column names or column indices", name))
+}
+
+.check_analysis_input <- function(
+    target_data,
+    source_data = NULL,
+    Y, D, M, X = NULL,
+    transfer = FALSE,
+    ncore = 1,
+    topN = NULL,
+    p_cutoff = NULL,
+    kfold = NULL,
+    t = NULL,
+    verbose = TRUE,
+    use_SIS = NULL,
+    require_source = FALSE
+) {
+  if (!is.data.frame(target_data) || nrow(target_data) < 2) {
+    stop("'target_data' must be a data frame with at least 2 rows.")
+  }
+
+  .check_flag <- function(val, name) {
+    if (is.null(val)) return(invisible(NULL))
+    if (!(is.logical(val) && length(val) == 1L && !is.na(val))) {
+      stop(sprintf("'%s' must be TRUE or FALSE.", name))
+    }
+  }
+  .check_flag(transfer, "transfer")
+  .check_flag(verbose, "verbose")
+  .check_flag(use_SIS, "use_SIS")
+
+  if (!is.numeric(ncore) || length(ncore) != 1L || is.na(ncore) ||
+      ncore < 1 || ncore != as.integer(ncore)) {
+    stop("'ncore' must be a positive integer.")
+  }
+  if (!is.null(topN) &&
+      (!is.numeric(topN) || length(topN) != 1L || is.na(topN) ||
+       topN < 1 || topN != as.integer(topN))) {
+    stop("'topN' must be NULL or a positive integer.")
+  }
+  if (!is.null(p_cutoff) &&
+      (!is.numeric(p_cutoff) || length(p_cutoff) != 1L || is.na(p_cutoff) ||
+       p_cutoff <= 0 || p_cutoff > 1)) {
+    stop("'p_cutoff' must be a single number in (0, 1].")
+  }
+  if (!is.null(kfold) &&
+      (!is.numeric(kfold) || length(kfold) != 1L || is.na(kfold) ||
+       kfold < 2 || kfold != as.integer(kfold) || kfold > nrow(target_data))) {
+    stop("'kfold' must be an integer >= 2 and no larger than the number of target rows.")
+  }
+  if (!is.null(t) &&
+      (!is.numeric(t) || length(t) != 1L || is.na(t) || t < 0)) {
+    stop("'t' must be a single nonnegative number.")
+  }
+
+  Y <- .resolve_cols(target_data, Y, "Y")
+  D <- .resolve_cols(target_data, D, "D")
+  M <- .resolve_cols(target_data, M, "M")
+  X <- .resolve_cols(target_data, X, "X")
+  if (length(Y) != 1L) stop("'Y' must name exactly one outcome column.")
+  if (length(D) != 1L) stop("'D' must name exactly one exposure column.")
+  if (length(M) < 1L) stop("At least one mediator must be supplied in 'M'.")
+
+  vars <- c(Y, D, M, X)
+  if (anyDuplicated(vars)) {
+    stop(
+      "'Y', 'D', 'M', and 'X' must name distinct columns. Duplicates: ",
+      paste(unique(vars[duplicated(vars)]), collapse = ", ")
+    )
+  }
+
+  .check_block <- function(data, label) {
+    block <- data[, vars, drop = FALSE]
+    nonnumeric <- vars[!vapply(block, is.numeric, logical(1))]
+    if (length(nonnumeric)) {
+      stop(sprintf(
+        "%s contains nonnumeric columns: %s",
+        label, paste(nonnumeric, collapse = ", ")
+      ))
+    }
+    missing <- vars[vapply(block, anyNA, logical(1))]
+    if (length(missing)) {
+      stop(sprintf(
+        "%s contains missing values in: %s",
+        label, paste(missing, collapse = ", ")
+      ))
+    }
+    nonfinite <- vars[vapply(block, function(z) any(is.infinite(z)), logical(1))]
+    if (length(nonfinite)) {
+      stop(sprintf(
+        "%s contains nonfinite values in: %s",
+        label, paste(nonfinite, collapse = ", ")
+      ))
+    }
+    predictors <- c(D, M, X)
+    zero_var <- predictors[vapply(data[, predictors, drop = FALSE], function(z) {
+      stats::var(z) == 0
+    }, logical(1))]
+    if (length(zero_var)) {
+      stop(sprintf(
+        "%s contains zero-variance predictors: %s",
+        label, paste(zero_var, collapse = ", ")
+      ))
+    }
+    if (stats::var(data[[Y]]) == 0) {
+      stop(sprintf("%s outcome '%s' has zero variance.", label, Y))
+    }
+  }
+
+  .check_block(target_data, "Target data")
+
+  sources <- if (is.null(source_data)) {
+    NULL
+  } else if (is.data.frame(source_data)) {
+    list(source_data)
+  } else if (is.list(source_data) && length(source_data) > 0 &&
+             all(vapply(source_data, is.data.frame, logical(1)))) {
+    source_data
+  } else {
+    stop("'source_data' must be a data frame or a non-empty list of data frames.")
+  }
+
+  if (isTRUE(require_source) && (is.null(sources) || length(sources) == 0)) {
+    stop("'source_data' must be a data frame or a non-empty list of source data frames.")
+  }
+  if (isTRUE(transfer) && (is.null(sources) || length(sources) == 0)) {
+    stop("'transfer = TRUE' requires at least one source dataset in 'source_data'.")
+  }
+
+  if (!is.null(sources)) {
+    needed <- vars
+    for (i in seq_along(sources)) {
+      missing_cols <- setdiff(needed, colnames(sources[[i]]))
+      if (length(missing_cols)) {
+        stop(sprintf(
+          "Source dataset %d does not contain the same analysis variables as the target data. Missing: %s",
+          i, paste(missing_cols, collapse = ", ")
+        ))
+      }
+      .check_block(sources[[i]], sprintf("Source dataset %d", i))
+    }
+  }
+
+  list(Y = Y, D = D, M = M, X = X)
 }
 

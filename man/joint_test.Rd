@@ -21,7 +21,10 @@ An object of class \code{"TransHDM"} — a list with:
 \itemize{
 \item \code{contributions}: Data frame of identified mediators with
 columns \code{mediator}, \code{alpha}, \code{alpha_pv}, \code{beta},
-\code{beta_pv}, \code{alpha_beta}, \code{ab_pv}, \code{pa}.
+\code{beta_pv}, \code{alpha_beta}, \code{ab_pv}, \code{fdr_est},
+\code{pa}. \code{ab_pv} is the original joint p-value,
+\code{max(alpha_pv, beta_pv)}. \code{fdr_est} is the pointwise FDR from
+\code{HDMT::fdr_est}.
 \item \code{effects}: Data frame summarising indirect, direct, total
 effects and proportion mediated (\code{pe}).
 \item \code{IDE_est}: Named numeric vector of indirect effect estimates
@@ -29,7 +32,7 @@ for all mediators (non-selected set to zero).
 \item \code{DE_est}: Estimated direct effect.
 \item \code{all_mediators}: Data frame of all SIS-screened mediators with
 columns \code{mediator}, \code{alpha}, \code{alpha_pv}, \code{beta},
-\code{beta_pv}, \code{significant} (logical).
+\code{beta_pv}, and \code{significant} (logical).
 }
 }
 \description{

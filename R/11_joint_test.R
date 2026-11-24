@@ -23,7 +23,10 @@
 #' \itemize{
 #'   \item \code{contributions}: Data frame of identified mediators with
 #'     columns \code{mediator}, \code{alpha}, \code{alpha_pv}, \code{beta},
-#'     \code{beta_pv}, \code{alpha_beta}, \code{ab_pv}, \code{pa}.
+#'     \code{beta_pv}, \code{alpha_beta}, \code{ab_pv}, \code{fdr_est},
+#'     \code{pa}. \code{ab_pv} is the original joint p-value,
+#'     \code{max(alpha_pv, beta_pv)}. \code{fdr_est} is the pointwise FDR from
+#'     \code{HDMT::fdr_est}.
 #'   \item \code{effects}: Data frame summarising indirect, direct, total
 #'     effects and proportion mediated (\code{pe}).
 #'   \item \code{IDE_est}: Named numeric vector of indirect effect estimates
@@ -31,7 +34,7 @@
 #'   \item \code{DE_est}: Estimated direct effect.
 #'   \item \code{all_mediators}: Data frame of all SIS-screened mediators with
 #'     columns \code{mediator}, \code{alpha}, \code{alpha_pv}, \code{beta},
-#'     \code{beta_pv}, \code{significant} (logical).
+#'     \code{beta_pv}, and \code{significant} (logical).
 #' }
 #'
 #' @seealso \code{\link{TransHDM}}, \code{\link{mediation_inference}}, \code{\link{SIS}}
@@ -64,6 +67,13 @@ joint_test <- function(
   if (!inherits(inference_result, "mediation_inference")) {
     stop("'inference_result' must be an object of class 'mediation_inference'.")
   }
+  if (!is.numeric(p_cutoff) || length(p_cutoff) != 1L || is.na(p_cutoff) ||
+      p_cutoff <= 0 || p_cutoff > 1) {
+    stop("'p_cutoff' must be a single number in (0, 1].")
+  }
+  if (length(inference_result$M_SIS) == 0) {
+    stop("No mediator passes screening, so joint testing cannot be performed.")
+  }
 
   # ---- Extract from inference result ----
   DE_est        <- inference_result$DE_est
@@ -83,31 +93,41 @@ joint_test <- function(
   }
 
   PA <- cbind(P_alpha_SIS[M_SIS], P_beta_SIS[M_SIS])
+  PA <- matrix(PA, ncol = 2)
   P_value <- apply(PA, 1, max)
 
-  N0 <- dim(PA)[1] * dim(PA)[2]
-  input_pvalues <- PA + matrix(runif(N0, 0, 10^{-10}), dim(PA)[1], 2)
+  N0 <- nrow(PA) * ncol(PA)
+  # Deterministic tie break, same magnitude as a Uniform(0, 1e-10) jitter.
+  input_pvalues <- PA + matrix(seq_len(N0) / (N0 + 1) * 1e-10, nrow(PA), 2)
 
   nullprop <- null_estimation(input_pvalues)
 
-  fdrcut <- HDMT::fdr_est(
-    nullprop$alpha00,
-    nullprop$alpha01,
-    nullprop$alpha10,
-    nullprop$alpha1,
-    nullprop$alpha2,
-    input_pvalues,
-    exact = 0
-  )
+  # HDMT::fdr_est drops a one-row matrix to a vector. Use the same
+  # exact = 0 formula directly when only one mediator is tested.
+  if (nrow(input_pvalues) == 1L) {
+    pmax_i <- max(input_pvalues)
+    fdrcut <- pmax_i * nullprop$alpha01 +
+      pmax_i * nullprop$alpha10 +
+      pmax_i * pmax_i * nullprop$alpha00
+  } else {
+    fdrcut <- HDMT::fdr_est(
+      nullprop$alpha00,
+      nullprop$alpha01,
+      nullprop$alpha10,
+      nullprop$alpha1,
+      nullprop$alpha2,
+      input_pvalues,
+      exact = 0
+    )
+  }
 
   ID_fdr <- which(fdrcut <= p_cutoff)
   selected_M <- M_SIS[ID_fdr]
+  ab_pv <- P_value[ID_fdr]
+  fdr_est <- fdrcut[ID_fdr]
 
   alpha_hat_est <- alpha_SIS_est[selected_M]
-  beta_hat_est  <- beta_SIS_est[selected_M]
-  ab_pv <- P_value[ID_fdr]
-
-  # ---- Effects ----
+  beta_hat_est <- beta_SIS_est[selected_M]
   alpha_beta_hat_est <- alpha_hat_est * beta_hat_est
 
   IDE_est <- setNames(rep(0, p_m), M)
@@ -130,6 +150,7 @@ joint_test <- function(
     beta_pv    = P_beta_SIS[selected_M],
     alpha_beta = alpha_beta_hat_est,
     ab_pv      = ab_pv,
+    fdr_est    = fdr_est,
     pa         = alpha_beta_hat_est / TE_est,
     row.names  = NULL,
     stringsAsFactors = FALSE

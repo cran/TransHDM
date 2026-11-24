@@ -79,7 +79,7 @@ summary.TransHDM <- function(object, top = 10, digits = 4, ...) {
 #' @export
 print.summary.TransHDM <- function(x, ...) {
 
-  p_cols <- c("alpha_pv", "beta_pv", "ab_pv")
+  p_cols <- c("alpha_pv", "beta_pv", "ab_pv", "fdr_est")
   digits <- x$digits
 
   cat("====================================================\n")
@@ -124,10 +124,12 @@ print.summary.TransHDM <- function(x, ...) {
   print(contrib_show, row.names = FALSE)
 
   cat("\nNote:\n")
-  cat("  alpha: exposure-mediator effect\n")
-  cat("  beta : mediator-outcome effect\n")
-  cat("  pa   : proportion of total effect explained\n")
-  cat("  P-values are shown in scientific notation\n")
+  cat("  alpha  : exposure-mediator effect\n")
+  cat("  beta   : mediator-outcome effect\n")
+  cat("  ab_pv  : joint p-value, max(alpha_pv, beta_pv)\n")
+  cat("  fdr_est: pointwise FDR from HDMT::fdr_est\n")
+  cat("  pa     : proportion of total effect explained\n")
+  cat("  P-values and fdr_est are shown in scientific notation\n")
 
   cat("\n====================================================\n")
 

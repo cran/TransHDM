@@ -32,7 +32,11 @@ All variables must be numeric and have the same column names as target_data.}
 
 \item{kfold}{Integer (default: 5). Number of folds for cross-validation.}
 
-\item{t}{Numeric (default: 0.02). Threshold constant for determining transferability.
+\item{t}{Numeric (default: 0.02). Relative tolerance for the validation
+mean squared error. A source is transferable when the profile
+negative-log-likelihood gap satisfies \eqn{T \le (n/2)\log(1+t)},
+where \eqn{n} is the average validation-fold size. This is the same
+rule as \eqn{\mathrm{MSE}_{source} \le (1+t)\,\mathrm{MSE}_{target}}.
 Larger values make the criterion more lenient.}
 
 \item{verbose}{Logical (default: TRUE). Whether to print progress messages.}
@@ -44,7 +48,7 @@ A list containing:
 \item{source.loss: Mean validation loss for each source dataset}
 \item{target.valid.loss: Mean validation loss using target-only model}
 \item{T_index: Difference between source loss and target-only loss for each source}
-\item{threshold: Calculated transferability threshold}
+\item{threshold: Transferability threshold \eqn{(n/2)\log(1+t)}}
 \item{loss.cv: Full k-fold cross-validation loss matrix}
 }
 }

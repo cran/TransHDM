@@ -11,7 +11,11 @@
 #' @param M Character vector specifying mediator variable names.
 #' @param X Character vector specifying covariate variable names.
 #' @param kfold Integer (default: 5). Number of folds for cross-validation.
-#' @param t Numeric (default: 0.02). Threshold constant for determining transferability.
+#' @param t Numeric (default: 0.02). Relative tolerance for the validation
+#'   mean squared error. A source is transferable when the profile
+#'   negative-log-likelihood gap satisfies \eqn{T \le (n/2)\log(1+t)},
+#'   where \eqn{n} is the average validation-fold size. This is the same
+#'   rule as \eqn{\mathrm{MSE}_{source} \le (1+t)\,\mathrm{MSE}_{target}}.
 #'   Larger values make the criterion more lenient.
 #' @param verbose Logical (default: TRUE). Whether to print progress messages.
 #'
@@ -21,7 +25,7 @@
 #'   \item{source.loss: Mean validation loss for each source dataset}
 #'   \item{target.valid.loss: Mean validation loss using target-only model}
 #'   \item{T_index: Difference between source loss and target-only loss for each source}
-#'   \item{threshold: Calculated transferability threshold}
+#'   \item{threshold: Transferability threshold \eqn{(n/2)\log(1+t)}}
 #'   \item{loss.cv: Full k-fold cross-validation loss matrix}
 #' }
 #'
@@ -91,14 +95,25 @@ source_detection <- function(target_data,
                              t = 0.02,
                              verbose = TRUE) {
 
+  if (is.data.frame(source_data)) {
+    source_data <- list(source_data)
+  }
+  checked <- .check_analysis_input(
+    target_data = target_data,
+    source_data = source_data,
+    Y = Y, D = D, M = M, X = X,
+    kfold = kfold,
+    t = t,
+    verbose = verbose,
+    require_source = TRUE
+  )
+  Y <- checked$Y
+  D <- checked$D
+  M <- checked$M
+  X <- checked$X
+
   # Helper: K-fold split
   target_data_split <- kfold_split(target_data, kfold = kfold)
-
-  # Ensure column names are characters
-  Y <- if(is.numeric(Y)) colnames(target_data)[Y] else Y
-  D <- if(is.numeric(D)) colnames(target_data)[D] else D
-  M <- if(is.numeric(M)) colnames(target_data)[M] else M
-  if(!is.null(X)) X <- if(is.numeric(X)) colnames(target_data)[X] else X
 
   # Internal loss function
   loss <- function(data, coef_beta) {
@@ -139,15 +154,23 @@ source_detection <- function(target_data,
   }))
 
 
-  # Aggregate losses
+  # Aggregate losses. On a validation fold of size n the profile-NLL
+  # gap equals (n/2) log(MSE_source/MSE_target). Comparing the averaged
+  # gap with (mean n / 2) log(1+t) allows a relative MSE increase of t
+  # and does not depend on the scale of the outcome.
   source.loss <- if(ncol(loss.cv) > 1) colMeans(loss.cv)[1:(ncol(loss.cv)-1)] else numeric(0)
   target.valid.loss <- colMeans(loss.cv)[ncol(loss.cv)]
   T_index <- source.loss - target.valid.loss
-  threshold <- t * max(target.valid.loss, 0.01)
+  n_val <- mean(vapply(target_data_split$test_set, nrow, integer(1L)))
+  threshold <- (n_val / 2) * log1p(t)
   transfer.source.id <- which(T_index <= threshold)
 
-  if(verbose) {
-    message("Transfer candidate sources: ", paste(transfer.source.id, collapse = ", "))
+  if (verbose) {
+    if (length(transfer.source.id) == 0) {
+      message("No transferable source is identified.")
+    } else {
+      message("Transfer candidate sources: ", paste(transfer.source.id, collapse = ", "))
+    }
   }
 
   # Output as a structured list

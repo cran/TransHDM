@@ -51,4 +51,13 @@ A list containing:
 Fits a debiased LASSO regression model under transfer learning framework, supporting feature
 selection and coefficient estimation by combining target and source data.
 }
+\details{
+The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+For Gaussian linear models, it assumes unit error variance.
+Under the required source-target heterogeneity conditions, pooled
+source and target design information is used to estimate the
+correlation structure, while the debiasing correction is based
+on target-domain data. This assumption is not automatically
+verified by the function.
+}
 \keyword{internal}

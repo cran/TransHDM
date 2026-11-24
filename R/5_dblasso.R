@@ -3,6 +3,15 @@
 #' Fits a debiased LASSO regression model under transfer learning framework, supporting feature
 #' selection and coefficient estimation by combining target and source data.
 #'
+#' @details
+#' The variance estimator follows Algorithm 3 of Tian and Feng (2023).
+#' For Gaussian linear models, it assumes unit error variance.
+#' Under the required source-target heterogeneity conditions, pooled
+#' source and target design information is used to estimate the
+#' correlation structure, while the debiasing correction is based
+#' on target-domain data. This assumption is not automatically
+#' verified by the function.
+#'
 #' @param target A list containing two elements:
 #'   \itemize{
 #'     \item{x: Feature matrix of target data (numeric matrix)}
@@ -44,7 +53,7 @@ dblasso <- function(
 ) {
 
   ## ---------- internal: nodewise regression ----------
-  gamma_est <- function(target, source = NULL, transfer = FALSE) {
+  gamma_est <- function(target, source = NULL, transfer = FALSE, lambda) {
 
     p_x <- ncol(target$x)
 
@@ -114,7 +123,12 @@ dblasso <- function(
 
   ## ---------- initial lasso ----------
   coef.hat <- as.vector(
-    lasso(target = target, source = source, transfer = transfer)
+    lasso(
+      target = target,
+      source = source,
+      transfer = transfer,
+      lambda = lambda
+    )
   )
 
   ## ---------- build design matrix with FIXED names ----------
@@ -158,9 +172,9 @@ dblasso <- function(
     if (transfer) {
       D1$source$y <- D1$source$x[, j]
       D1$source$x <- D1$source$x[, -j, drop = FALSE]
-      gamma <- gamma_est(D1$target, D1$source, TRUE)
+      gamma <- gamma_est(D1$target, D1$source, TRUE, lambda = lambda)
     } else {
-      gamma <- gamma_est(D1$target)
+      gamma <- gamma_est(D1$target, lambda = lambda)
     }
 
     tau2 <- Sigma.hat[j, j] -
